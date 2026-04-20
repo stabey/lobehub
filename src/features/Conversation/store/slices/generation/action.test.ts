@@ -1,4 +1,4 @@
-import { AgentManagementIdentifier } from '@lobechat/builtin-tool-agent-management';
+import { createCallAgentManifest } from '@lobechat/builtin-tool-agent-management';
 import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -830,8 +830,8 @@ describe('Generation Actions', () => {
         expect.objectContaining({
           initialContext: {
             initialContext: {
+              injectedManifests: [createCallAgentManifest()],
               mentionedAgents: [{ id: 'agent-a', name: 'Agent A' }],
-              selectedTools: [{ identifier: AgentManagementIdentifier, name: 'Agent Management' }],
             },
             phase: 'init',
           },

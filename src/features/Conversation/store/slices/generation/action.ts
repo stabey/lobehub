@@ -1,4 +1,4 @@
-import { AgentManagementIdentifier } from '@lobechat/builtin-tool-agent-management';
+import { createCallAgentManifest } from '@lobechat/builtin-tool-agent-management';
 import { type StateCreator } from 'zustand';
 
 import { MESSAGE_CANCEL_FLAT } from '@/const/index';
@@ -19,23 +19,21 @@ const buildRetryInitialContext = (editorData: Record<string, any> | null | undef
   const selectedTools = parseSelectedToolsFromEditorData(normalizedEditorData);
   const mentionedAgents = parseMentionedAgentsFromEditorData(normalizedEditorData);
 
-  const effectiveSelectedTools =
-    mentionedAgents.length > 0 &&
-    !selectedTools.some((tool) => tool.identifier === AgentManagementIdentifier)
-      ? [...selectedTools, { identifier: AgentManagementIdentifier, name: 'Agent Management' }]
-      : selectedTools;
+  const injectedManifests = mentionedAgents.length > 0 ? [createCallAgentManifest()] : undefined;
 
   const hasInitialContext =
-    effectiveSelectedTools.length > 0 || selectedSkills.length > 0 || mentionedAgents.length > 0;
+    selectedTools.length > 0 ||
+    selectedSkills.length > 0 ||
+    mentionedAgents.length > 0 ||
+    !!injectedManifests?.length;
 
   if (!hasInitialContext) return undefined;
 
   return {
     initialContext: {
+      ...(injectedManifests?.length ? { injectedManifests } : undefined),
       ...(selectedSkills.length > 0 ? { selectedSkills } : undefined),
-      ...(effectiveSelectedTools.length > 0
-        ? { selectedTools: effectiveSelectedTools }
-        : undefined),
+      ...(selectedTools.length > 0 ? { selectedTools } : undefined),
       ...(mentionedAgents.length > 0 ? { mentionedAgents } : undefined),
     },
     phase: 'init' as const,
