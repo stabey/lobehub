@@ -333,15 +333,27 @@ class ChatService {
     const hasTopicReferences = messages.some(
       (message) => typeof message.content === 'string' && message.content.includes('refer_topic'),
     );
-    const hasUnsupportedCompactTools = enabledToolIds.some((id) =>
-      UNSUPPORTED_COMPACT_TRANSPORT_TOOL_IDS.has(id),
+    const hasCompactCompatibleMentionContext = this.isCompactCompatibleMentionContext(
+      options?.initialContext,
     );
-    const hasInitialContextData = !!(
-      options?.initialContext?.injectedManifests?.length ||
-      options?.initialContext?.mentionedAgents?.length ||
+    const hasUnsupportedCompactTools = enabledToolIds.some((id) => {
+      if (
+        id === AgentManagementIdentifier &&
+        hasCompactCompatibleMentionContext &&
+        !plugins.includes(AgentManagementIdentifier)
+      ) {
+        return false;
+      }
+
+      return UNSUPPORTED_COMPACT_TRANSPORT_TOOL_IDS.has(id);
+    });
+    const hasBlockingInitialContextData = !!(
       options?.initialContext?.pageEditor ||
       options?.initialContext?.selectedSkills?.length ||
-      options?.initialContext?.selectedTools?.length
+      options?.initialContext?.selectedTools?.length ||
+      ((options?.initialContext?.injectedManifests?.length ||
+        options?.initialContext?.mentionedAgents?.length) &&
+        !hasCompactCompatibleMentionContext)
     );
     const hasStepContextData = !!(
       options?.stepContext?.activatedSkills?.length ||
@@ -361,7 +373,7 @@ class ChatService {
       !hasTopicReferences &&
       !hasUnsupportedCompactTools &&
       !options?.historySummary &&
-      !hasInitialContextData &&
+      !hasBlockingInitialContextData &&
       !hasStepContextData;
 
     return this.getChatCompletion(
@@ -669,6 +681,17 @@ class ChatService {
       compactEnabled: serverConfigSelectors.chatTransportCompact(state),
       stagedEnabled: serverConfigSelectors.chatTransportStaged(state),
     };
+  };
+
+  private isCompactCompatibleMentionContext = (initialContext?: RuntimeInitialContext) => {
+    if (!initialContext?.mentionedAgents?.length) return false;
+
+    const injectedManifests = initialContext.injectedManifests ?? [];
+
+    return (
+      injectedManifests.length > 0 &&
+      injectedManifests.every((manifest) => manifest.identifier === AgentManagementIdentifier)
+    );
   };
 
   private canUseCompactTransport = ({

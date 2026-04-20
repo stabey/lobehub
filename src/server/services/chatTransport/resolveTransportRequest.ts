@@ -1,4 +1,8 @@
 import { builtinSkills } from '@lobechat/builtin-skills';
+import {
+  AgentManagementIdentifier,
+  createCallAgentManifest,
+} from '@lobechat/builtin-tool-agent-management';
 import { manualModeExcludeToolIds } from '@lobechat/builtin-tools';
 import type { LobeToolManifest } from '@lobechat/context-engine';
 import { SkillEngine } from '@lobechat/context-engine';
@@ -6,6 +10,7 @@ import type {
   ChatStreamPayload,
   ChatTransportRequest,
   CompactTopicChatTransportRequest,
+  RuntimeMentionedAgent,
 } from '@lobechat/types';
 import { LOBE_DEFAULT_MODEL_LIST } from 'model-bank';
 
@@ -54,6 +59,38 @@ const mapAgentDocuments = (documents: AgentDocumentWithRules[]) => {
     policyLoadFormat: document.policyLoadFormat,
     title: document.title,
   }));
+};
+
+const parseMentionedAgentsFromEditorData = (
+  editorData: Record<string, any> | null | undefined,
+): RuntimeMentionedAgent[] => {
+  if (!editorData) return [];
+
+  const agents: RuntimeMentionedAgent[] = [];
+  const seen = new Set<string>();
+
+  const walk = (node: any): void => {
+    if (!node) return;
+
+    if (node.type === 'mention' && node.metadata?.type === 'agent') {
+      const id = typeof node.metadata.id === 'string' ? node.metadata.id : undefined;
+
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        agents.push({ id, name: node.label || id });
+      }
+    }
+
+    if (Array.isArray(node.children)) {
+      for (const child of node.children) {
+        walk(child);
+      }
+    }
+  };
+
+  walk(editorData.root);
+
+  return agents;
 };
 
 const resolveCompactTransportRequest = async (
@@ -140,11 +177,23 @@ const resolveCompactTransportRequest = async (
   const generalSettings = userSettings?.general as { timezone?: string } | undefined;
   const userTimezone = generalSettings?.timezone;
   const agentPlugins = agentConfig.plugins ?? [];
+  const mentionedAgents = parseMentionedAgentsFromEditorData(userMessage.editorData);
+  const shouldInjectMentionDelegation =
+    mentionedAgents.length > 0 && !agentPlugins.includes(AgentManagementIdentifier);
+  const effectiveAgentPlugins = shouldInjectMentionDelegation
+    ? [...new Set([...agentPlugins, AgentManagementIdentifier])]
+    : agentPlugins;
   const hasEnabledKnowledgeBases =
     agentConfig.knowledgeBases?.some((knowledgeBase) => knowledgeBase.enabled === true) ?? false;
   const { compact: _compact, transport: _transport, ...payload } = request;
   const model = payload.model ?? agentConfig.model;
   const provider = payload.provider ?? agentConfig.provider;
+  const additionalManifests = [
+    ...lobehubSkillManifests,
+    ...klavisManifests,
+    ...(shouldInjectMentionDelegation ? [createCallAgentManifest() as LobeToolManifest] : []),
+  ];
+  const agentManagementContext = mentionedAgents.length > 0 ? { mentionedAgents } : undefined;
 
   const isModelSupportToolUse = (model: string, provider: string) => {
     const info = LOBE_DEFAULT_MODEL_LIST.find(
@@ -160,10 +209,10 @@ const resolveCompactTransportRequest = async (
       isModelSupportToolUse,
     },
     {
-      additionalManifests: [...lobehubSkillManifests, ...klavisManifests],
+      additionalManifests,
       agentConfig: {
         chatConfig: agentConfig.chatConfig ?? undefined,
-        plugins: agentPlugins,
+        plugins: effectiveAgentPlugins,
       },
       globalMemoryEnabled: false,
       hasAgentDocuments: agentDocuments.length > 0,
@@ -174,7 +223,7 @@ const resolveCompactTransportRequest = async (
     },
   );
 
-  const pluginIds = agentPlugins;
+  const pluginIds = effectiveAgentPlugins;
 
   const toolsResult = toolsEngine.generateToolsDetailed({
     excludeDefaultToolIds: manualModeExcludeToolIds,
@@ -207,6 +256,7 @@ const resolveCompactTransportRequest = async (
     enableHistoryCount: agentConfig.chatConfig?.enableHistoryCount ?? undefined,
     historyCount: (agentConfig.chatConfig?.historyCount ?? 20) + 1,
     inputTemplate: agentConfig.chatConfig?.inputTemplate ?? undefined,
+    agentManagementContext,
     knowledge: {
       fileContents: agentConfig.files
         ?.filter((file) => file.enabled === true && !!file.content)

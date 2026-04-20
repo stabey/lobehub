@@ -1,4 +1,8 @@
 import { AgentBuilderIdentifier } from '@lobechat/builtin-tool-agent-builder';
+import {
+  AgentManagementIdentifier,
+  createCallAgentManifest,
+} from '@lobechat/builtin-tool-agent-management';
 import { WebBrowsingManifest } from '@lobechat/builtin-tool-web-browsing';
 import { type ChatStreamPayload, type LobeTool, type UIChatMessage } from '@lobechat/types';
 import { ChatErrorType } from '@lobechat/types';
@@ -1538,6 +1542,88 @@ describe('ChatService', () => {
         );
       });
     });
+
+    describe('compact transport safety', () => {
+      it('should keep compact transport enabled for mention-only agent management injection', async () => {
+        const getChatCompletionSpy = vi
+          .spyOn(chatService, 'getChatCompletion')
+          .mockResolvedValue(new Response(''));
+        vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue([]);
+
+        await chatService.createAssistantMessage(
+          {
+            messages: [
+              {
+                content: 'Ask Agent B for help',
+                createdAt: Date.now(),
+                id: 'user-1',
+                role: 'user',
+                updatedAt: Date.now(),
+              },
+            ] as UIChatMessage[],
+            resolvedAgentConfig: createMockResolvedConfig({
+              chatConfig: { memory: { enabled: false }, skillActivateMode: 'manual' },
+              enabledToolIds: [AgentManagementIdentifier],
+              plugins: [],
+            }),
+          },
+          {
+            initialContext: {
+              injectedManifests: [createCallAgentManifest()],
+              mentionedAgents: [{ id: 'agent-b', name: 'Agent B' }],
+            },
+          },
+        );
+
+        expect(getChatCompletionSpy).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            compactSafe: true,
+            userMessageId: 'user-1',
+          }),
+        );
+      });
+
+      it('should still block compact transport for full agent management tool usage', async () => {
+        const getChatCompletionSpy = vi
+          .spyOn(chatService, 'getChatCompletion')
+          .mockResolvedValue(new Response(''));
+        vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue([]);
+
+        await chatService.createAssistantMessage(
+          {
+            messages: [
+              {
+                content: 'Manage my agents',
+                createdAt: Date.now(),
+                id: 'user-1',
+                role: 'user',
+                updatedAt: Date.now(),
+              },
+            ] as UIChatMessage[],
+            resolvedAgentConfig: createMockResolvedConfig({
+              chatConfig: { skillActivateMode: 'manual' },
+              enabledToolIds: [AgentManagementIdentifier],
+              plugins: [AgentManagementIdentifier],
+            }),
+          },
+          {
+            initialContext: {
+              injectedManifests: [createCallAgentManifest()],
+              mentionedAgents: [{ id: 'agent-b', name: 'Agent B' }],
+            },
+          },
+        );
+
+        expect(getChatCompletionSpy).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            compactSafe: false,
+            userMessageId: 'user-1',
+          }),
+        );
+      });
+    });
   });
 
   describe('getChatCompletion', () => {
@@ -1701,6 +1787,41 @@ describe('ChatService', () => {
         }),
       );
       expect(requestBody).not.toHaveProperty('messages');
+    });
+
+    it('should use compact transport for mention-only delegation context', async () => {
+      vi.spyOn(aiProviderSelectors, 'isProviderFetchOnClient').mockReturnValue(() => false);
+
+      window.global_serverConfigStore = {
+        getState: () => ({ serverConfig: { chatTransport: { compact: true, staged: true } } }),
+      } as any;
+
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const params: Partial<ChatStreamPayload> = {
+        model: 'test-model',
+        messages: [{ content: 'hello', role: 'user' }],
+        provider: 'openai',
+      };
+
+      await chatService.getChatCompletion(params, {
+        agentId: 'agent-1',
+        assistantMessageId: 'assistant-1',
+        compactSafe: true,
+        initialContext: {
+          injectedManifests: [createCallAgentManifest()],
+          mentionedAgents: [{ id: 'agent-b', name: 'Agent B' }],
+        },
+        threadId: 'thread-1',
+        topicId: 'topic-1',
+        userMessageId: 'user-1',
+      });
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(JSON.parse(mockFetchSSE.mock.calls[0][1].body)).toEqual(
+        expect.objectContaining({ transport: 'compact' }),
+      );
     });
 
     it('should use staged transport when enabled for remote requests', async () => {

@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { AgentManagementIdentifier } from '@lobechat/builtin-tool-agent-management';
 import type { ChatStreamPayload, CompactTopicChatTransportRequest } from '@lobechat/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -152,6 +153,24 @@ const toolManifest = {
   type: 'default' as const,
 };
 
+const mentionEditorData = {
+  root: {
+    children: [
+      {
+        children: [
+          {
+            label: 'Agent B',
+            metadata: { id: 'agent-b', type: 'agent' },
+            type: 'mention',
+          },
+        ],
+        type: 'paragraph',
+      },
+    ],
+    type: 'root',
+  },
+};
+
 const lobehubSkillManifest = {
   api: [],
   identifier: 'lobehub-skill-provider',
@@ -254,6 +273,7 @@ describe('resolveTransportRequest', () => {
         {
           content: 'Latest question',
           createdAt: new Date(),
+          editorData: null,
           id: 'user-1',
           role: 'user',
           updatedAt: new Date(),
@@ -430,6 +450,77 @@ describe('resolveTransportRequest', () => {
       stream: true,
       temperature: 0.6,
     });
+  });
+
+  it('should inject mention delegation context for compact requests without full agent management', async () => {
+    mockGetMessagesAndTopics.mockResolvedValue({
+      messages: [
+        {
+          content: 'Earlier question',
+          createdAt: new Date(),
+          id: 'prev-user',
+          role: 'user',
+          updatedAt: new Date(),
+        },
+        {
+          content: 'Earlier answer',
+          createdAt: new Date(),
+          id: 'prev-assistant',
+          role: 'assistant',
+          updatedAt: new Date(),
+        },
+        {
+          content: 'Ask Agent B',
+          createdAt: new Date(),
+          editorData: mentionEditorData,
+          id: 'user-1',
+          role: 'user',
+          updatedAt: new Date(),
+        },
+        {
+          content: '',
+          createdAt: new Date(),
+          id: 'assistant-1',
+          parentId: 'user-1',
+          role: 'assistant',
+          updatedAt: new Date(),
+        },
+      ],
+    });
+    mockGenerateToolsDetailed.mockReturnValue({
+      enabledManifests: [toolManifest, expect.anything()],
+      enabledToolIds: ['plugin-a', AgentManagementIdentifier],
+    } as any);
+
+    await resolveTransportRequest(createCompactRequest(), { serverDB, userId: 'user-1' });
+
+    expect(mockCreateServerAgentToolsEngine).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        additionalManifests: expect.arrayContaining([
+          lobehubSkillManifest,
+          klavisManifest,
+          expect.objectContaining({ identifier: AgentManagementIdentifier }),
+        ]),
+        agentConfig: expect.objectContaining({
+          plugins: ['plugin-a', AgentManagementIdentifier],
+        }),
+      }),
+    );
+
+    expect(mockGenerateToolsDetailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolIds: ['plugin-a', AgentManagementIdentifier],
+      }),
+    );
+
+    expect(mockServerMessagesEngine).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentManagementContext: {
+          mentionedAgents: [{ id: 'agent-b', name: 'Agent B' }],
+        },
+      }),
+    );
   });
 
   it('should reject compact requests when manual skill activation is disabled', async () => {
