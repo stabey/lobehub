@@ -47,6 +47,7 @@ export interface ServerModelProviderConfig {
 export type ServerLanguageModel = Partial<Record<GlobalLLMProviderKey, ServerModelProviderConfig>>;
 
 export interface ChatTransportPublicConfig {
+  compact?: boolean;
   staged?: boolean;
 }
 

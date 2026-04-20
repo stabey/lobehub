@@ -1653,6 +1653,56 @@ describe('ChatService', () => {
       expect(onErrorHandle).toHaveBeenCalled();
     });
 
+    it('should use compact transport when enabled for compact-safe remote requests', async () => {
+      vi.spyOn(aiProviderSelectors, 'isProviderFetchOnClient').mockReturnValue(() => false);
+
+      window.global_serverConfigStore = {
+        getState: () => ({ serverConfig: { chatTransport: { compact: true, staged: true } } }),
+      } as any;
+
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const params: Partial<ChatStreamPayload> = {
+        model: 'test-model',
+        messages: [{ content: 'hello', role: 'user' }],
+        provider: 'openai',
+      };
+
+      await chatService.getChatCompletion(params, {
+        agentId: 'agent-1',
+        assistantMessageId: 'assistant-1',
+        compactSafe: true,
+        threadId: 'thread-1',
+        topicId: 'topic-1',
+        userMessageId: 'user-1',
+      });
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      const requestBody = JSON.parse(mockFetchSSE.mock.calls[0][1].body);
+
+      expect(requestBody).toEqual(
+        expect.objectContaining({
+          apiMode: 'responses',
+          compact: {
+            agentId: 'agent-1',
+            assistantMessageId: 'assistant-1',
+            scope: 'topic',
+            threadId: 'thread-1',
+            topicId: 'topic-1',
+            userMessageId: 'user-1',
+            version: 1,
+          },
+          model: 'test-model',
+          stream: true,
+          temperature: DEFAULT_AGENT_CONFIG.params.temperature,
+          transport: 'compact',
+        }),
+      );
+      expect(requestBody).not.toHaveProperty('messages');
+    });
+
     it('should use staged transport when enabled for remote requests', async () => {
       vi.spyOn(aiProviderSelectors, 'isProviderFetchOnClient').mockReturnValue(() => false);
 

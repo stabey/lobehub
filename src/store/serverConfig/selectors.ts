@@ -3,6 +3,7 @@ import { type ServerConfigStore } from './store';
 export const featureFlagsSelectors = (s: ServerConfigStore) => s.featureFlags;
 
 export const serverConfigSelectors = {
+  chatTransportCompact: (s: ServerConfigStore) => s.serverConfig.chatTransport?.compact || false,
   chatTransportStaged: (s: ServerConfigStore) => s.serverConfig.chatTransport?.staged || false,
   disableEmailPassword: (s: ServerConfigStore) => s.serverConfig.disableEmailPassword || false,
   enableBusinessFeatures: (s: ServerConfigStore) => s.serverConfig.enableBusinessFeatures || false,

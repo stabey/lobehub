@@ -24,7 +24,7 @@ export const POST = checkAuth(async (req: Request, { params, userId, serverDB })
     // ============  2. create chat completion   ============ //
 
     const requestBody = (await req.json()) as ChatTransportRequest;
-    const data = await resolveTransportRequest(requestBody, userId);
+    const data = await resolveTransportRequest(requestBody, { serverDB, userId });
 
     const tracePayload = getTracePayload(req);
 

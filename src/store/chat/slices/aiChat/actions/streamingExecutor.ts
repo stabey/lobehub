@@ -361,13 +361,14 @@ export class StreamingExecutorActionImpl {
     initialState?: AgentState;
     inPortalThread?: boolean;
     inSearchWorkflow?: boolean;
+    isSubTask?: boolean;
     messages: UIChatMessage[];
     operationId?: string;
     parentMessageId: string;
     parentMessageType: 'user' | 'assistant' | 'tool';
     parentOperationId?: string;
     skipCreateFirstMessage?: boolean;
-    isSubTask?: boolean;
+    userMessageId?: string;
   }): Promise<{ cost?: Cost; usage?: Usage } | void> => {
     const {
       disableTools,
@@ -485,6 +486,7 @@ export class StreamingExecutorActionImpl {
         parentId: params.parentMessageId,
         skipCreateFirstMessage: params.skipCreateFirstMessage,
         toolsEngine, // Pass toolsEngine for dynamic tool injection via activateTools
+        userMessageId: params.userMessageId,
       }),
       getOperation: (opId: string) => {
         const op = this.#get().operations[opId];

@@ -76,6 +76,7 @@ export const getServerGlobalConfig = async () => {
       config: parseAgentConfig(DEFAULT_AGENT_CONFIG),
     },
     chatTransport: cleanObject({
+      compact: getChatTransportConfig().compactEnabled || undefined,
       staged: getChatTransportConfig().enabled || undefined,
     }),
     disableEmailPassword: authEnv.AUTH_DISABLE_EMAIL_PASSWORD,

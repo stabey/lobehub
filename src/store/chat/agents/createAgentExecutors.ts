@@ -153,6 +153,7 @@ export const createAgentExecutors = (context: {
   skipCreateFirstMessage?: boolean;
   /** ToolsEngine for expanding dynamically activated tools */
   toolsEngine?: ToolsEngine;
+  userMessageId?: string;
 }) => {
   let shouldSkipCreateMessage = context.skipCreateFirstMessage;
 
@@ -458,6 +459,7 @@ export const createAgentExecutors = (context: {
 
       await chatService.createAssistantMessageStream({
         abortController,
+        assistantMessageId,
         params: {
           agentId: agentId || undefined,
           groupId,
@@ -470,11 +472,13 @@ export const createAgentExecutors = (context: {
         },
         initialContext: runtimeContext?.initialContext,
         stepContext: runtimeContext?.stepContext,
+        threadId: operation.context.threadId ?? undefined,
         trace: {
           traceId,
           topicId: topicId ?? undefined,
           traceName: TraceNameMap.Conversation,
         },
+        userMessageId: context.userMessageId,
         onErrorHandle: async (error) => {
           const enrichedError = {
             ...error,

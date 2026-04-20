@@ -1,4 +1,11 @@
+import { LobeActivatorIdentifier } from '@lobechat/builtin-tool-activator';
 import { AgentBuilderIdentifier } from '@lobechat/builtin-tool-agent-builder';
+import { AgentManagementIdentifier } from '@lobechat/builtin-tool-agent-management';
+import { CredsIdentifier } from '@lobechat/builtin-tool-creds';
+import { GroupAgentBuilderIdentifier } from '@lobechat/builtin-tool-group-agent-builder';
+import { GTDIdentifier } from '@lobechat/builtin-tool-gtd';
+import { PageAgentIdentifier } from '@lobechat/builtin-tool-page-agent';
+import { WebOnboardingIdentifier } from '@lobechat/builtin-tool-web-onboarding';
 import { KLAVIS_SERVER_TYPES, LOBEHUB_SKILL_PROVIDERS } from '@lobechat/const';
 import { type OfficialToolItem } from '@lobechat/context-engine';
 import { type FetchSSEOptions } from '@lobechat/fetch-sse';
@@ -41,6 +48,7 @@ import {
 import type {
   ChatStreamPayload,
   ChatTransportRequest,
+  CompactTopicChatTransportRequest,
   OpenAIChatMessage,
 } from '@/types/openai/chat';
 import { createErrorResponse } from '@/utils/errorResponse';
@@ -91,18 +99,33 @@ interface FetchAITaskResultParams extends FetchSSEOptions {
 
 interface CreateAssistantMessageStream extends FetchSSEOptions {
   abortController?: AbortController;
+  assistantMessageId?: string;
   historySummary?: string;
   /** Initial context for page editor (captured at operation start) */
   initialContext?: RuntimeInitialContext;
   params: GetChatCompletionPayload;
   /** Step context for page editor (updated each step) */
   stepContext?: RuntimeStepContext;
+  threadId?: string;
   trace?: TracePayload;
+  userMessageId?: string;
 }
 
-interface StagedTransportConfig {
-  enabled: boolean;
+interface TransportConfig {
+  compactEnabled: boolean;
+  stagedEnabled: boolean;
 }
+
+const UNSUPPORTED_COMPACT_TRANSPORT_TOOL_IDS = new Set([
+  AgentBuilderIdentifier,
+  AgentManagementIdentifier,
+  CredsIdentifier,
+  GTDIdentifier,
+  GroupAgentBuilderIdentifier,
+  LobeActivatorIdentifier,
+  PageAgentIdentifier,
+  WebOnboardingIdentifier,
+]);
 
 class ChatService {
   private resolveAgentDocumentsTargetId = (
@@ -306,6 +329,41 @@ class ChatService {
       provider: payload.provider!,
     });
 
+    const lastMessage = messages.at(-1);
+    const hasTopicReferences = messages.some(
+      (message) => typeof message.content === 'string' && message.content.includes('refer_topic'),
+    );
+    const hasUnsupportedCompactTools = enabledToolIds.some((id) =>
+      UNSUPPORTED_COMPACT_TRANSPORT_TOOL_IDS.has(id),
+    );
+    const hasInitialContextData = !!(
+      options?.initialContext?.injectedManifests?.length ||
+      options?.initialContext?.mentionedAgents?.length ||
+      options?.initialContext?.pageEditor ||
+      options?.initialContext?.selectedSkills?.length ||
+      options?.initialContext?.selectedTools?.length
+    );
+    const hasStepContextData = !!(
+      options?.stepContext?.activatedSkills?.length ||
+      options?.stepContext?.activatedToolIds?.length ||
+      options?.stepContext?.hasQueuedMessages ||
+      options?.stepContext?.stepPageEditor ||
+      options?.stepContext?.todos
+    );
+    const isLatestMessageUser = lastMessage?.role === 'user';
+    const userMessageId = isLatestMessageUser ? lastMessage.id : undefined;
+    const compactSafe =
+      chatConfig.skillActivateMode === 'manual' &&
+      isLatestMessageUser &&
+      (!options?.userMessageId || options.userMessageId === userMessageId) &&
+      !groupId &&
+      !enableUserMemories &&
+      !hasTopicReferences &&
+      !hasUnsupportedCompactTools &&
+      !options?.historySummary &&
+      !hasInitialContextData &&
+      !hasStepContextData;
+
     return this.getChatCompletion(
       {
         ...params,
@@ -316,13 +374,20 @@ class ChatService {
         stream: chatConfig.enableStreaming !== false,
         tools,
       },
-      { ...options, agentId: targetAgentId, topicId },
+      {
+        ...options,
+        agentId: targetAgentId,
+        compactSafe,
+        topicId,
+        userMessageId,
+      },
     );
   };
 
   createAssistantMessageStream = async ({
     params,
     abortController,
+    assistantMessageId,
     onAbort,
     onMessageHandle,
     onErrorHandle,
@@ -331,8 +396,11 @@ class ChatService {
     historySummary,
     initialContext,
     stepContext,
+    threadId,
+    userMessageId,
   }: CreateAssistantMessageStream) => {
     await this.createAssistantMessage(params, {
+      assistantMessageId,
       historySummary,
       initialContext,
       onAbort,
@@ -341,12 +409,23 @@ class ChatService {
       onMessageHandle,
       signal: abortController?.signal,
       stepContext,
+      threadId,
       trace: this.mapTrace(trace, TraceTagMap.Chat),
+      userMessageId,
     });
   };
 
   getChatCompletion = async (params: Partial<ChatStreamPayload>, options?: FetchOptions) => {
-    const { agentId, signal, responseAnimation, topicId } = options ?? {};
+    const {
+      agentId,
+      assistantMessageId,
+      compactSafe,
+      signal,
+      responseAnimation,
+      threadId,
+      topicId,
+      userMessageId,
+    } = options ?? {};
 
     const { provider = ModelProvider.OpenAI, ...res } = params;
 
@@ -434,17 +513,37 @@ class ChatService {
     }
 
     let transportRequest: ChatTransportRequest = payload as ChatStreamPayload;
+    const transportConfig = this.getTransportConfig();
 
-    if (!enableFetchOnClient && this.getStagedTransportConfig().enabled) {
-      try {
-        transportRequest = await this.createStagedTransportRequest(
-          payload as ChatStreamPayload,
-          provider,
-          signal,
-        );
-      } catch (error) {
-        if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
-          throw error;
+    if (!enableFetchOnClient) {
+      if (
+        this.canUseCompactTransport({
+          agentId,
+          assistantMessageId,
+          compactSafe,
+          topicId,
+          transportConfig,
+          userMessageId,
+        })
+      ) {
+        transportRequest = this.createCompactTransportRequest(payload as ChatStreamPayload, {
+          agentId: agentId!,
+          assistantMessageId: assistantMessageId!,
+          topicId: topicId!,
+          threadId,
+          userMessageId: userMessageId!,
+        });
+      } else if (transportConfig.stagedEnabled) {
+        try {
+          transportRequest = await this.createStagedTransportRequest(
+            payload as ChatStreamPayload,
+            provider,
+            signal,
+          );
+        } catch (error) {
+          if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+            throw error;
+          }
         }
       }
     }
@@ -559,15 +658,58 @@ class ChatService {
    * Fetch chat completion on the client side.
 
    */
-  private getStagedTransportConfig = (): StagedTransportConfig => {
+  private getTransportConfig = (): TransportConfig => {
     if (typeof window === 'undefined' || !window.global_serverConfigStore) {
-      return { enabled: false };
+      return { compactEnabled: false, stagedEnabled: false };
     }
 
     const state = window.global_serverConfigStore.getState();
 
     return {
-      enabled: serverConfigSelectors.chatTransportStaged(state),
+      compactEnabled: serverConfigSelectors.chatTransportCompact(state),
+      stagedEnabled: serverConfigSelectors.chatTransportStaged(state),
+    };
+  };
+
+  private canUseCompactTransport = ({
+    agentId,
+    assistantMessageId,
+    compactSafe,
+    topicId,
+    transportConfig,
+    userMessageId,
+  }: {
+    agentId?: string;
+    assistantMessageId?: string;
+    compactSafe?: boolean;
+    topicId?: string;
+    transportConfig: TransportConfig;
+    userMessageId?: string;
+  }) => {
+    return !!(
+      transportConfig.compactEnabled &&
+      compactSafe &&
+      agentId &&
+      assistantMessageId &&
+      topicId &&
+      userMessageId
+    );
+  };
+
+  private createCompactTransportRequest = (
+    payload: ChatStreamPayload,
+    compact: Omit<CompactTopicChatTransportRequest['compact'], 'scope' | 'version'>,
+  ): CompactTopicChatTransportRequest => {
+    const { messages: _messages, ...request } = payload;
+
+    return {
+      ...request,
+      compact: {
+        ...compact,
+        scope: 'topic',
+        version: 1,
+      },
+      transport: 'compact',
     };
   };
 

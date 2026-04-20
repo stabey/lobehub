@@ -121,7 +121,25 @@ export interface StagedChatTransportRequest {
   transport: 'staged';
 }
 
-export type ChatTransportRequest = ChatStreamPayload | StagedChatTransportRequest;
+export interface CompactTopicChatTransportContext {
+  agentId: string;
+  assistantMessageId: string;
+  scope: 'topic';
+  threadId?: string;
+  topicId: string;
+  userMessageId: string;
+  version: 1;
+}
+
+export interface CompactTopicChatTransportRequest extends Omit<ChatStreamPayload, 'messages'> {
+  compact: CompactTopicChatTransportContext;
+  transport: 'compact';
+}
+
+export type ChatTransportRequest =
+  | ChatStreamPayload
+  | CompactTopicChatTransportRequest
+  | StagedChatTransportRequest;
 
 export interface ChatCompletionFunctions {
   /**

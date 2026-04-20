@@ -106,7 +106,10 @@ describe('POST handler', () => {
       const response = await POST(request as unknown as Request, { params: mockParams });
 
       expect(response).toEqual(mockChatResponse);
-      expect(resolveTransportRequest).toHaveBeenCalledWith(mockChatPayload, 'test-user-id');
+      expect(resolveTransportRequest).toHaveBeenCalledWith(mockChatPayload, {
+        serverDB: expect.anything(),
+        userId: 'test-user-id',
+      });
       expect(mockRuntime.chat).toHaveBeenCalledWith(mockChatPayload, {
         user: 'test-user-id',
         signal: expect.anything(),
