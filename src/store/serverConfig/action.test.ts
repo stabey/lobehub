@@ -35,10 +35,13 @@ vi.mock('@/libs/swr', () => ({
 
 const mockGlobalConfig: GlobalRuntimeConfig = {
   serverConfig: {
+    aiProvider: {},
+    chatTransport: {
+      staged: true,
+    },
     telemetry: {
       langfuse: undefined,
     },
-    aiProvider: {},
   },
   serverFeatureFlags: {
     enableWebrtc: true,
@@ -114,8 +117,11 @@ describe('ServerConfigAction', () => {
     it('should set serverConfig and featureFlags correctly', () => {
       const customConfig: GlobalRuntimeConfig = {
         serverConfig: {
-          telemetry: { langfuse: { publicKey: 'test-key' } },
           aiProvider: {},
+          chatTransport: {
+            staged: false,
+          },
+          telemetry: { langfuse: { publicKey: 'test-key' } },
         },
         serverFeatureFlags: {
           enableWebrtc: false,

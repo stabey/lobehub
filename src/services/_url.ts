@@ -10,6 +10,7 @@ export const API_ENDPOINTS = {
 
   // chat
   chat: (provider: string) => withElectronProtocolIfElectron(`/webapi/chat/${provider}`),
+  chatStage: withElectronProtocolIfElectron('/webapi/chat/stage'),
 
   // models
   models: (provider: string) => withElectronProtocolIfElectron(`/webapi/models/${provider}`),

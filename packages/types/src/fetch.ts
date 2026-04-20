@@ -29,6 +29,7 @@ export const ChatErrorType = {
   Forbidden: 403,
   ContentNotFound: 404, // Endpoint not found
   MethodNotAllowed: 405, // Method not supported
+  PayloadTooLarge: 413,
   TooManyRequests: 429,
 
   // ******* Server Errors ******* //InvalidPluginArgumentsTransform

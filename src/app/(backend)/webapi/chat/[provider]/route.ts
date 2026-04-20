@@ -1,10 +1,12 @@
-import { type ChatCompletionErrorPayload } from '@lobechat/model-runtime';
+import type { ChatCompletionErrorPayload } from '@lobechat/model-runtime';
 import { AGENT_RUNTIME_ERROR_SET } from '@lobechat/model-runtime';
+import type { ChatTransportRequest } from '@lobechat/types';
 import { ChatErrorType } from '@lobechat/types';
 
 import { checkAuth } from '@/app/(backend)/middleware/auth';
 import { createTraceOptions, initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
-import { type ChatStreamPayload } from '@/types/openai/chat';
+import { resolveTransportRequest } from '@/server/services/chatTransport/resolveTransportRequest';
+import { ChatTransportStageStoreError } from '@/server/services/chatTransport/stageStore';
 import { createErrorResponse } from '@/utils/errorResponse';
 import { getTracePayload } from '@/utils/trace';
 
@@ -21,7 +23,8 @@ export const POST = checkAuth(async (req: Request, { params, userId, serverDB })
 
     // ============  2. create chat completion   ============ //
 
-    const data = (await req.json()) as ChatStreamPayload;
+    const requestBody = (await req.json()) as ChatTransportRequest;
+    const data = await resolveTransportRequest(requestBody, userId);
 
     const tracePayload = getTracePayload(req);
 
@@ -37,6 +40,19 @@ export const POST = checkAuth(async (req: Request, { params, userId, serverDB })
       signal: req.signal,
     });
   } catch (e) {
+    if (e instanceof ChatTransportStageStoreError) {
+      const errorType =
+        e.statusCode === 403
+          ? ChatErrorType.Forbidden
+          : e.statusCode === 404
+            ? ChatErrorType.ContentNotFound
+            : e.statusCode === 503
+              ? ChatErrorType.ServiceUnavailable
+              : ChatErrorType.BadRequest;
+
+      return createErrorResponse(errorType, { error: e.message, provider });
+    }
+
     const {
       errorType = ChatErrorType.InternalServerError,
       error: errorContent,

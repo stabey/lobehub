@@ -1,0 +1,156 @@
+// @vitest-environment node
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { auth } from '@/auth';
+import { ChatTransportStageStoreError } from '@/server/services/chatTransport/stageStore';
+
+import { POST } from './route';
+
+const mockCreateStage = vi.fn();
+
+vi.mock('@/app/(backend)/middleware/auth/utils', () => ({
+  checkAuthMethod: vi.fn(),
+}));
+
+vi.mock('@/server/services/chatTransport/stageStore', () => {
+  class MockChatTransportStageStoreError extends Error {
+    statusCode: number;
+
+    constructor(statusCode: number, message: string) {
+      super(message);
+      this.name = 'ChatTransportStageStoreError';
+      this.statusCode = statusCode;
+    }
+  }
+
+  return {
+    ChatTransportStageStore: vi.fn().mockImplementation(() => ({
+      createStage: mockCreateStage,
+    })),
+    ChatTransportStageStoreError: MockChatTransportStageStoreError,
+  };
+});
+
+vi.mock('@/auth', () => ({
+  auth: {
+    api: {
+      getSession: vi.fn().mockResolvedValue(null),
+    },
+  },
+}));
+
+describe('chat stage route', () => {
+  let request: Request;
+
+  beforeEach(() => {
+    request = new Request(new URL('https://test.com'), {
+      method: 'POST',
+      body: JSON.stringify({ messages: [], model: 'test-model', temperature: 1 }),
+    });
+
+    vi.mocked(auth.api.getSession).mockResolvedValue({
+      session: {} as any,
+      user: { id: 'test-user-id' } as any,
+    });
+    mockCreateStage.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('creates a stage for a valid payload', async () => {
+    mockCreateStage.mockResolvedValue({
+      expiresAt: '2026-04-20T00:00:00.000Z',
+      stageId: 'stage-123',
+    });
+
+    const response = await POST(request, { params: Promise.resolve({}) });
+
+    expect(response.status).toBe(200);
+    expect(mockCreateStage).toHaveBeenCalledWith({
+      messages: [],
+      model: 'test-model',
+      temperature: 1,
+    });
+    expect(await response.json()).toEqual({
+      expiresAt: '2026-04-20T00:00:00.000Z',
+      stageId: 'stage-123',
+    });
+  });
+
+  it('returns bad request for invalid staged payload', async () => {
+    request = new Request(new URL('https://test.com'), {
+      method: 'POST',
+      body: JSON.stringify({ model: 'test-model' }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({}) });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      body: {
+        error: 'Invalid staged chat payload',
+      },
+      errorType: 400,
+    });
+    expect(mockCreateStage).not.toHaveBeenCalled();
+  });
+
+  it('returns bad request for invalid json payload', async () => {
+    request = new Request(new URL('https://test.com'), {
+      method: 'POST',
+      body: '{',
+    });
+
+    const response = await POST(request, { params: Promise.resolve({}) });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      body: {
+        error: 'Invalid staged chat payload',
+      },
+      errorType: 400,
+    });
+    expect(mockCreateStage).not.toHaveBeenCalled();
+  });
+
+  it('returns payload too large for oversized requests', async () => {
+    request = new Request(new URL('https://test.com'), {
+      method: 'POST',
+      body: JSON.stringify({
+        messages: [],
+        model: 'test-model',
+        padding: 'x'.repeat(1024 * 1024),
+        temperature: 1,
+      }),
+    });
+
+    const response = await POST(request, { params: Promise.resolve({}) });
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({
+      body: {
+        error: 'Chat transport payload must be 1048576 bytes or smaller',
+      },
+      errorType: 413,
+    });
+    expect(mockCreateStage).not.toHaveBeenCalled();
+  });
+
+  it('maps stage store errors to HTTP responses', async () => {
+    mockCreateStage.mockImplementation(() => {
+      throw new ChatTransportStageStoreError(503, 'Redis is unavailable');
+    });
+
+    const response = await POST(request, { params: Promise.resolve({}) });
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      body: {
+        error: 'Redis is unavailable',
+      },
+      errorType: 503,
+    });
+  });
+});

@@ -2,7 +2,7 @@ import { AgentBuilderIdentifier } from '@lobechat/builtin-tool-agent-builder';
 import { KLAVIS_SERVER_TYPES, LOBEHUB_SKILL_PROVIDERS } from '@lobechat/const';
 import { type OfficialToolItem } from '@lobechat/context-engine';
 import { type FetchSSEOptions } from '@lobechat/fetch-sse';
-import { fetchSSE, standardizeAnimationStyle } from '@lobechat/fetch-sse';
+import { fetchSSE, getMessageError, standardizeAnimationStyle } from '@lobechat/fetch-sse';
 import { type ChatCompletionErrorPayload } from '@lobechat/model-runtime';
 import { AgentRuntimeError } from '@lobechat/model-runtime';
 import {
@@ -25,6 +25,7 @@ import {
 } from '@/store/agent/selectors';
 import { aiProviderSelectors, getAiInfraStoreState } from '@/store/aiInfra';
 import { getChatStoreState } from '@/store/chat';
+import { serverConfigSelectors } from '@/store/serverConfig/selectors';
 import { getToolStoreState } from '@/store/tool';
 import {
   builtinToolSelectors,
@@ -37,7 +38,11 @@ import {
   userGeneralSettingsSelectors,
   userProfileSelectors,
 } from '@/store/user/selectors';
-import { type ChatStreamPayload, type OpenAIChatMessage } from '@/types/openai/chat';
+import type {
+  ChatStreamPayload,
+  ChatTransportRequest,
+  OpenAIChatMessage,
+} from '@/types/openai/chat';
 import { createErrorResponse } from '@/utils/errorResponse';
 import { createTraceHeader } from '@/utils/trace';
 
@@ -93,6 +98,10 @@ interface CreateAssistantMessageStream extends FetchSSEOptions {
   /** Step context for page editor (updated each step) */
   stepContext?: RuntimeStepContext;
   trace?: TracePayload;
+}
+
+interface StagedTransportConfig {
+  enabled: boolean;
 }
 
 class ChatService {
@@ -424,6 +433,22 @@ class ChatService {
       };
     }
 
+    let transportRequest: ChatTransportRequest = payload as ChatStreamPayload;
+
+    if (!enableFetchOnClient && this.getStagedTransportConfig().enabled) {
+      try {
+        transportRequest = await this.createStagedTransportRequest(
+          payload as ChatStreamPayload,
+          provider,
+          signal,
+        );
+      } catch (error) {
+        if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
+          throw error;
+        }
+      }
+    }
+
     const traceHeader = createTraceHeader({ ...options?.trace });
 
     const headers = await createHeaderWithAuth({
@@ -450,7 +475,7 @@ class ChatService {
     ].reduce((acc, cur) => merge(acc, standardizeAnimationStyle(cur)), {});
 
     return fetchSSE(API_ENDPOINTS.chat(provider), {
-      body: JSON.stringify(payload),
+      body: JSON.stringify(transportRequest),
       fetcher,
       headers,
       method: 'POST',
@@ -534,6 +559,49 @@ class ChatService {
    * Fetch chat completion on the client side.
 
    */
+  private getStagedTransportConfig = (): StagedTransportConfig => {
+    if (typeof window === 'undefined' || !window.global_serverConfigStore) {
+      return { enabled: false };
+    }
+
+    const state = window.global_serverConfigStore.getState();
+
+    return {
+      enabled: serverConfigSelectors.chatTransportStaged(state),
+    };
+  };
+
+  private createStagedTransportRequest = async (
+    payload: ChatStreamPayload,
+    provider: string,
+    signal?: AbortSignal,
+  ): Promise<ChatTransportRequest> => {
+    const headers = await createHeaderWithAuth({
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      provider,
+    });
+
+    const response = await fetch(API_ENDPOINTS.chatStage, {
+      body: JSON.stringify(payload),
+      headers,
+      method: 'POST',
+      signal,
+    });
+
+    if (!response.ok) {
+      throw await getMessageError(response);
+    }
+
+    const data = (await response.json()) as { stageId: string };
+
+    return {
+      stageId: data.stageId,
+      transport: 'staged',
+    };
+  };
+
   private fetchOnClient = async (params: {
     payload: Partial<ChatStreamPayload>;
     provider: string;

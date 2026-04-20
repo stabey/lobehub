@@ -4,13 +4,14 @@ import { klavisEnv } from '@/config/klavis';
 import { isDesktop } from '@/const/version';
 import { appEnv, getAppConfig } from '@/envs/app';
 import { authEnv } from '@/envs/auth';
+import { getChatTransportConfig } from '@/envs/chat';
 import { fileEnv } from '@/envs/file';
 import { imageEnv } from '@/envs/image';
 import { knowledgeEnv } from '@/envs/knowledge';
 import { langfuseEnv } from '@/envs/langfuse';
 import { parseSSOProviders } from '@/libs/better-auth/utils/server';
 import { parseSystemAgent } from '@/server/globalConfig/parseSystemAgent';
-import { type GlobalServerConfig } from '@/types/serverConfig';
+import type { GlobalServerConfig } from '@/types/serverConfig';
 import { cleanObject } from '@/utils/object';
 
 import { genServerAiProvidersConfig } from './genServerAiProviderConfig';
@@ -74,6 +75,9 @@ export const getServerGlobalConfig = async () => {
     defaultAgent: {
       config: parseAgentConfig(DEFAULT_AGENT_CONFIG),
     },
+    chatTransport: cleanObject({
+      staged: getChatTransportConfig().enabled || undefined,
+    }),
     disableEmailPassword: authEnv.AUTH_DISABLE_EMAIL_PASSWORD,
     enableBusinessFeatures: ENABLE_BUSINESS_FEATURES,
     enableEmailVerification: authEnv.AUTH_EMAIL_VERIFICATION,

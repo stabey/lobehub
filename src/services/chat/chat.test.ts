@@ -7,10 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_AGENT_CONFIG } from '@/const/settings';
 import * as toolEngineeringModule from '@/helpers/toolEngineering';
+import { API_ENDPOINTS } from '@/services/_url';
 import { agentDocumentService } from '@/services/agentDocument';
 import { useAgentStore } from '@/store/agent';
 import { agentSelectors, chatConfigByIdSelectors } from '@/store/agent/selectors';
-import { aiModelSelectors } from '@/store/aiInfra';
+import { aiModelSelectors, aiProviderSelectors } from '@/store/aiInfra';
 import { useChatStore } from '@/store/chat';
 import { useToolStore } from '@/store/tool';
 import { settingsSelectors } from '@/store/user/selectors';
@@ -1547,6 +1548,15 @@ describe('ChatService', () => {
       const { fetchSSE } = await import('@lobechat/fetch-sse');
       mockFetchSSE = vi.fn().mockResolvedValue(new Response('mock response'));
       vi.mocked(fetchSSE).mockImplementation(mockFetchSSE);
+
+      vi.mocked(global.fetch).mockResolvedValue(
+        new Response(JSON.stringify({ some: 'data' }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        }),
+      );
+
+      delete (window as any).global_serverConfigStore;
     });
 
     it('should make a POST request with the correct payload', async () => {
@@ -1643,7 +1653,124 @@ describe('ChatService', () => {
       expect(onErrorHandle).toHaveBeenCalled();
     });
 
-    // Add more test cases to cover different scenarios and edge cases
+    it('should use staged transport when enabled for remote requests', async () => {
+      vi.spyOn(aiProviderSelectors, 'isProviderFetchOnClient').mockReturnValue(() => false);
+
+      window.global_serverConfigStore = {
+        getState: () => ({ serverConfig: { chatTransport: { staged: true } } }),
+      } as any;
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ stageId: 'stage-123' }), {
+            headers: { 'Content-Type': 'application/json' },
+            status: 200,
+          }),
+        ),
+      );
+
+      const params: Partial<ChatStreamPayload> = {
+        model: 'test-model',
+        messages: [],
+        provider: 'openai',
+      };
+
+      await chatService.getChatCompletion(params, {});
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        API_ENDPOINTS.chatStage,
+        expect.objectContaining({
+          body: JSON.stringify({
+            model: 'test-model',
+            stream: true,
+            ...DEFAULT_AGENT_CONFIG.params,
+            messages: [],
+            apiMode: 'responses',
+          }),
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          method: 'POST',
+          signal: undefined,
+        }),
+      );
+
+      expect(mockFetchSSE).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: JSON.stringify({ stageId: 'stage-123', transport: 'staged' }),
+        }),
+      );
+    });
+
+    it('should fall back to direct transport when stage creation fails', async () => {
+      vi.spyOn(aiProviderSelectors, 'isProviderFetchOnClient').mockReturnValue(() => false);
+
+      window.global_serverConfigStore = {
+        getState: () => ({ serverConfig: { chatTransport: { staged: true } } }),
+      } as any;
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(new Response('stage failed', { status: 500 })),
+      );
+
+      const params: Partial<ChatStreamPayload> = {
+        model: 'test-model',
+        messages: [],
+        provider: 'openai',
+      };
+
+      await chatService.getChatCompletion(params, {});
+
+      expect(global.fetch).toHaveBeenCalledWith(API_ENDPOINTS.chatStage, expect.anything());
+      expect(mockFetchSSE).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: JSON.stringify({
+            model: 'test-model',
+            stream: true,
+            ...DEFAULT_AGENT_CONFIG.params,
+            messages: [],
+            apiMode: 'responses',
+          }),
+        }),
+      );
+    });
+
+    it('should skip staged transport for fetch-on-client requests', async () => {
+      vi.spyOn(aiProviderSelectors, 'isProviderFetchOnClient').mockReturnValue(() => true);
+
+      window.global_serverConfigStore = {
+        getState: () => ({ serverConfig: { chatTransport: { staged: true } } }),
+      } as any;
+
+      const fetchSpy = vi.fn();
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const params: Partial<ChatStreamPayload> = {
+        model: 'test-model',
+        messages: [],
+        provider: 'openai',
+      };
+
+      await chatService.getChatCompletion(params, {});
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(mockFetchSSE).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          body: JSON.stringify({
+            model: 'test-model',
+            stream: true,
+            ...DEFAULT_AGENT_CONFIG.params,
+            messages: [],
+            apiMode: 'responses',
+          }),
+        }),
+      );
+    });
   });
 
   describe('fetchPresetTaskResult', () => {

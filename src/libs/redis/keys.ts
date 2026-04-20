@@ -54,6 +54,7 @@ export const RedisKeys = {
    * Lobechat core scope - for application-level caching
    */
   lobechat: {
-    // Add lobechat scope keys here as needed
+    chatTransportStage: (userId: string, stageId: string): string =>
+      `chat_transport_stage:${userId}:${stageId}`,
   },
 } as const;

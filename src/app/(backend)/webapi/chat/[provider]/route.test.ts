@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { auth } from '@/auth';
 import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
+import { resolveTransportRequest } from '@/server/services/chatTransport/resolveTransportRequest';
+import { ChatTransportStageStoreError } from '@/server/services/chatTransport/stageStore';
 
 import { POST } from './route';
 
@@ -16,6 +18,10 @@ vi.mock('@/app/(backend)/middleware/auth/utils', () => ({
 vi.mock('@/server/modules/ModelRuntime', () => ({
   initModelRuntimeFromDB: vi.fn(),
   createTraceOptions: vi.fn().mockReturnValue({}),
+}));
+
+vi.mock('@/server/services/chatTransport/resolveTransportRequest', () => ({
+  resolveTransportRequest: vi.fn(async (payload) => payload),
 }));
 
 vi.mock('@/auth', () => ({
@@ -100,6 +106,7 @@ describe('POST handler', () => {
       const response = await POST(request as unknown as Request, { params: mockParams });
 
       expect(response).toEqual(mockChatResponse);
+      expect(resolveTransportRequest).toHaveBeenCalledWith(mockChatPayload, 'test-user-id');
       expect(mockRuntime.chat).toHaveBeenCalledWith(mockChatPayload, {
         user: 'test-user-id',
         signal: expect.anything(),
@@ -141,6 +148,37 @@ describe('POST handler', () => {
         },
         errorType: 500,
       });
+    });
+
+    it('should return bad request when staged transport resolution fails', async () => {
+      const mockParams = Promise.resolve({ provider: 'test-provider' });
+      request = new Request(new URL('https://test.com'), {
+        method: 'POST',
+        body: JSON.stringify({ stageId: 'stage-123', transport: 'staged' }),
+      });
+
+      vi.mocked(resolveTransportRequest).mockRejectedValueOnce(
+        new ChatTransportStageStoreError(400, 'invalid stage'),
+      );
+
+      const mockRuntime: LobeRuntimeAI = {
+        baseURL: 'abc',
+        chat: vi.fn(),
+      };
+
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue(new ModelRuntime(mockRuntime));
+
+      const response = await POST(request, { params: mockParams });
+
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        body: {
+          error: 'invalid stage',
+          provider: 'test-provider',
+        },
+        errorType: 400,
+      });
+      expect(mockRuntime.chat).not.toHaveBeenCalled();
     });
   });
 });

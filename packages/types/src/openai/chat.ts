@@ -116,6 +116,13 @@ export interface ChatStreamPayload {
   top_p?: number;
 }
 
+export interface StagedChatTransportRequest {
+  stageId: string;
+  transport: 'staged';
+}
+
+export type ChatTransportRequest = ChatStreamPayload | StagedChatTransportRequest;
+
 export interface ChatCompletionFunctions {
   /**
    * The description of what the function does.
