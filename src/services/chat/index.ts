@@ -332,9 +332,6 @@ class ChatService {
     });
 
     const lastMessage = messages.at(-1);
-    const hasTopicReferences = messages.some(
-      (message) => typeof message.content === 'string' && message.content.includes('refer_topic'),
-    );
     const hasCompactCompatibleMentionContext = this.isCompactCompatibleMentionContext(
       options?.initialContext,
     );
@@ -377,7 +374,6 @@ class ChatService {
       (!options?.userMessageId || options.userMessageId === userMessageId) &&
       !groupId &&
       !enableUserMemories &&
-      !hasTopicReferences &&
       !hasUnsupportedCompactTools &&
       !options?.historySummary &&
       !hasBlockingInitialContextData &&

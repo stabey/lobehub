@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { AgentManagementIdentifier } from '@lobechat/builtin-tool-agent-management';
-import type { ChatStreamPayload, CompactTopicChatTransportRequest } from '@lobechat/types';
+import type { TopicItem } from '@lobechat/database/schemas';
+import type {
+  ChatStreamPayload,
+  CompactTopicChatTransportRequest,
+  UIChatMessage,
+} from '@lobechat/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resolveTransportRequest } from './resolveTransportRequest';
@@ -23,11 +28,15 @@ const {
   mockFindAllSkills,
   mockFindSkillByIdentifier,
   mockGetDocumentById,
+  mockQueryMessages,
+  mockFindTopicById,
 } = vi.hoisted(() => ({
   mockCreateServerAgentToolsEngine: vi.fn(),
   mockFindAllSkills: vi.fn(),
   mockFindSkillByIdentifier: vi.fn(),
   mockGetDocumentById: vi.fn(),
+  mockQueryMessages: vi.fn(),
+  mockFindTopicById: vi.fn(),
   mockGenerateSkillSet: vi.fn(),
   mockGenerateToolsDetailed: vi.fn(),
   mockGetAgentConfigById: vi.fn(),
@@ -51,11 +60,16 @@ vi.mock('@lobechat/builtin-tools', () => ({
   manualModeExcludeToolIds: ['manual-excluded-tool'],
 }));
 
-vi.mock('@lobechat/context-engine', () => ({
-  SkillEngine: vi.fn().mockImplementation(() => ({
-    generate: mockGenerateSkillSet,
-  })),
-}));
+vi.mock('@lobechat/context-engine', async (importOriginal) => {
+  const actual = await importOriginal();
+
+  return {
+    ...actual,
+    SkillEngine: vi.fn().mockImplementation(() => ({
+      generate: mockGenerateSkillSet,
+    })),
+  };
+});
 
 vi.mock('model-bank', () => ({
   LOBE_DEFAULT_MODEL_LIST: [
@@ -82,6 +96,18 @@ vi.mock('@/database/models/agentSkill', () => ({
 vi.mock('@/database/models/plugin', () => ({
   PluginModel: vi.fn().mockImplementation(() => ({
     query: mockQueryPlugins,
+  })),
+}));
+
+vi.mock('@/database/models/message', () => ({
+  MessageModel: vi.fn().mockImplementation(() => ({
+    query: mockQueryMessages,
+  })),
+}));
+
+vi.mock('@/database/models/topic', () => ({
+  TopicModel: vi.fn().mockImplementation(() => ({
+    findById: mockFindTopicById,
   })),
 }));
 
@@ -383,6 +409,8 @@ describe('resolveTransportRequest', () => {
     });
     mockFindSkillByIdentifier.mockResolvedValue(undefined);
     mockGetDocumentById.mockResolvedValue(undefined);
+    mockFindTopicById.mockResolvedValue(null);
+    mockQueryMessages.mockResolvedValue([] as UIChatMessage[]);
 
     mockGetLobehubSkillManifests.mockResolvedValue([lobehubSkillManifest]);
     mockGetKlavisManifests.mockResolvedValue([klavisManifest]);
@@ -769,6 +797,63 @@ describe('resolveTransportRequest', () => {
         systemRole: expect.stringContaining('You are a helpful assistant.'),
       }),
     );
+  });
+
+  it('should resolve topic references from persisted messages in compact requests', async () => {
+    mockGetMessagesAndTopics.mockResolvedValue({
+      messages: [
+        {
+          content: 'Earlier question',
+          createdAt: new Date(),
+          id: 'prev-user',
+          role: 'user',
+          updatedAt: new Date(),
+        },
+        {
+          content: 'Earlier answer',
+          createdAt: new Date(),
+          id: 'prev-assistant',
+          role: 'assistant',
+          updatedAt: new Date(),
+        },
+        {
+          content: '<refer_topic name="Referenced Topic" id="topic-ref" />\nTell me more',
+          createdAt: new Date(),
+          id: 'user-1',
+          role: 'user',
+          updatedAt: new Date(),
+        },
+        {
+          content: '',
+          createdAt: new Date(),
+          id: 'assistant-1',
+          parentId: 'user-1',
+          role: 'assistant',
+          updatedAt: new Date(),
+        },
+      ],
+    });
+    mockFindTopicById.mockResolvedValue({
+      historySummary: 'Referenced topic summary',
+      id: 'topic-ref',
+      title: 'Referenced Topic',
+    } as TopicItem);
+
+    await resolveTransportRequest(createCompactRequest(), { serverDB, userId: 'user-1' });
+
+    expect(mockFindTopicById).toHaveBeenCalledWith('topic-ref');
+    expect(mockServerMessagesEngine).toHaveBeenCalledWith(
+      expect.objectContaining({
+        topicReferences: [
+          expect.objectContaining({
+            summary: 'Referenced topic summary',
+            topicId: 'topic-ref',
+            topicTitle: 'Referenced Topic',
+          }),
+        ],
+      }),
+    );
+    expect(mockQueryMessages).not.toHaveBeenCalled();
   });
 
   it('should reject compact requests when manual skill activation is disabled', async () => {

@@ -11,7 +11,11 @@ import {
 } from '@lobechat/builtin-tool-creds';
 import { PageAgentIdentifier } from '@lobechat/builtin-tool-page-agent';
 import { builtinTools, manualModeExcludeToolIds } from '@lobechat/builtin-tools';
-import { type LobeToolManifest, SkillEngine } from '@lobechat/context-engine';
+import {
+  type LobeToolManifest,
+  resolveTopicReferences,
+  SkillEngine,
+} from '@lobechat/context-engine';
 import type { PageContentContext } from '@lobechat/prompts';
 import { resourcesTreePrompt } from '@lobechat/prompts';
 import type {
@@ -26,7 +30,9 @@ import { LOBE_DEFAULT_MODEL_LIST } from 'model-bank';
 
 import type { AgentDocumentWithRules } from '@/database/models/agentDocuments';
 import { AgentSkillModel } from '@/database/models/agentSkill';
+import { MessageModel } from '@/database/models/message';
 import { PluginModel } from '@/database/models/plugin';
+import { TopicModel } from '@/database/models/topic';
 import { UserModel } from '@/database/models/user';
 import type { LobeChatDatabase } from '@/database/type';
 import { shouldEnableBuiltinSkill } from '@/helpers/skillFilters';
@@ -456,6 +462,8 @@ const resolveCompactTransportRequest = async (
   const marketService = new MarketService({ userInfo: { userId } });
   const klavisService = new KlavisService({ db: serverDB, userId });
   const documentService = new DocumentService(serverDB, userId);
+  const topicModel = new TopicModel(serverDB, userId);
+  const messageModel = new MessageModel(serverDB, userId);
 
   const [
     agentConfig,
@@ -518,6 +526,28 @@ const resolveCompactTransportRequest = async (
       'Compact chat transport latest user message is invalid',
     );
   }
+
+  const topicLookupCache = new Map<string, Awaited<ReturnType<TopicModel['findById']>> | null>();
+  const lookupTopic = async (topicId: string) => {
+    if (!topicLookupCache.has(topicId)) {
+      topicLookupCache.set(topicId, (await topicModel.findById(topicId)) ?? null);
+    }
+
+    return topicLookupCache.get(topicId) ?? null;
+  };
+  const topicReferences = await resolveTopicReferences(
+    runtimeMessages,
+    lookupTopic,
+    async (topicId) => {
+      const topic = await lookupTopic(topicId);
+
+      return messageModel.query({
+        agentId: topic?.agentId ?? undefined,
+        groupId: topic?.groupId ?? undefined,
+        topicId,
+      });
+    },
+  );
 
   const isPageScope = !!compact.documentId;
   const generalSettings = userSettings?.general as { timezone?: string } | undefined;
@@ -669,6 +699,7 @@ const resolveCompactTransportRequest = async (
     selectedTools: selectedTools.length > 0 ? selectedTools : undefined,
     skillsConfig: enabledSkills.length > 0 ? { enabledSkills } : undefined,
     systemRole: effectiveSystemRole,
+    topicReferences: topicReferences && topicReferences.length > 0 ? topicReferences : undefined,
     toolsConfig: {
       manifests: toolsResult.enabledManifests,
       tools: toolsResult.enabledToolIds,

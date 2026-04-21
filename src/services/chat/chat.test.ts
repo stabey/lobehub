@@ -1706,6 +1706,36 @@ describe('ChatService', () => {
         );
       });
 
+      it('should keep compact transport enabled when topic references are present', async () => {
+        const getChatCompletionSpy = vi
+          .spyOn(chatService, 'getChatCompletion')
+          .mockResolvedValue(new Response(''));
+        vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue([]);
+
+        await chatService.createAssistantMessage({
+          messages: [
+            {
+              content: '<refer_topic name="Referenced Topic" id="topic-1" />\nTell me more',
+              createdAt: Date.now(),
+              id: 'user-1',
+              role: 'user',
+              updatedAt: Date.now(),
+            },
+          ] as UIChatMessage[],
+          resolvedAgentConfig: createMockResolvedConfig({
+            chatConfig: { memory: { enabled: false }, skillActivateMode: 'manual' },
+          }),
+        });
+
+        expect(getChatCompletionSpy).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            compactSafe: true,
+            userMessageId: 'user-1',
+          }),
+        );
+      });
+
       it('should keep compact transport blocked when page editor context has no document id', async () => {
         const getChatCompletionSpy = vi
           .spyOn(chatService, 'getChatCompletion')
@@ -2135,23 +2165,21 @@ describe('ChatService', () => {
 
     it('should handle successful chat completion response', async () => {
       // Mock getChatCompletion to simulate successful completion
-      const getChatCompletionSpy = vi
-        .spyOn(chatService, 'getChatCompletion')
-        .mockImplementation(async (params, options) => {
-          // Simulate successful response
-          if (options?.onFinish) {
-            options.onFinish('AI response', {
-              type: 'done',
-              observationId: null,
-              toolCalls: undefined,
-              traceId: null,
-            });
-          }
-          if (options?.onMessageHandle) {
-            options.onMessageHandle({ type: 'text', text: 'AI response' });
-          }
-          return new Response('');
-        });
+      vi.spyOn(chatService, 'getChatCompletion').mockImplementation(async (params, options) => {
+        // Simulate successful response
+        if (options?.onFinish) {
+          options.onFinish('AI response', {
+            type: 'done',
+            observationId: null,
+            toolCalls: undefined,
+            traceId: null,
+          });
+        }
+        if (options?.onMessageHandle) {
+          options.onMessageHandle({ type: 'text', text: 'AI response' });
+        }
+        return new Response('');
+      });
 
       const params = {
         messages: [{ content: 'Hello', role: 'user' as const }],
@@ -2190,15 +2218,13 @@ describe('ChatService', () => {
 
     it('should handle error in chat completion', async () => {
       // Mock getChatCompletion to simulate error
-      const getChatCompletionSpy = vi
-        .spyOn(chatService, 'getChatCompletion')
-        .mockImplementation(async (params, options) => {
-          // Simulate error response
-          if (options?.onErrorHandle) {
-            options.onErrorHandle({ message: 'translated_response.404', type: 404 });
-          }
-          return new Response('');
-        });
+      vi.spyOn(chatService, 'getChatCompletion').mockImplementation(async (params, options) => {
+        // Simulate error response
+        if (options?.onErrorHandle) {
+          options.onErrorHandle({ message: 'translated_response.404', type: 404 });
+        }
+        return new Response('');
+      });
 
       const params = {
         messages: [{ content: 'Hello', role: 'user' as const }],
