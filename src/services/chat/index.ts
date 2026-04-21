@@ -359,13 +359,7 @@ class ChatService {
         options?.initialContext?.mentionedAgents?.length) &&
         !hasCompactCompatibleMentionContext)
     );
-    const hasStepContextData = !!(
-      options?.stepContext?.activatedSkills?.length ||
-      options?.stepContext?.activatedToolIds?.length ||
-      options?.stepContext?.hasQueuedMessages ||
-      options?.stepContext?.stepPageEditor ||
-      options?.stepContext?.todos
-    );
+    const hasStepContextData = !!options?.stepContext?.stepPageEditor;
     const isLatestMessageUser = lastMessage?.role === 'user';
     const userMessageId = isLatestMessageUser ? lastMessage.id : undefined;
     const compactSafe =

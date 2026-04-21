@@ -162,6 +162,32 @@ const parseSelectedToolsFromEditorData = (
   }, []);
 };
 
+const parseActivatedToolIdsFromMessages = (messages: Array<Record<string, any>>): string[] => {
+  const activatedToolIds = new Set<string>();
+
+  for (const message of messages) {
+    if (
+      message.role !== 'tool' ||
+      (message.plugin?.identifier !== 'lobe-activator' &&
+        message.plugin?.identifier !== 'lobe-tools')
+    ) {
+      continue;
+    }
+
+    const activatedTools = message.pluginState?.activatedTools;
+
+    if (!Array.isArray(activatedTools)) continue;
+
+    for (const tool of activatedTools) {
+      if (typeof tool?.identifier === 'string' && tool.identifier) {
+        activatedToolIds.add(tool.identifier);
+      }
+    }
+  }
+
+  return [...activatedToolIds];
+};
+
 const formatSelectedToolContent = (manifest: LobeToolManifest): string | undefined => {
   const parts: string[] = [];
 
@@ -563,6 +589,9 @@ const resolveCompactTransportRequest = async (
     parseSelectedToolsFromEditorData(userMessage.editorData),
     installedPlugins,
   );
+  const activatedToolIds = parseActivatedToolIdsFromMessages(
+    runtimeMessages as Array<Record<string, any>>,
+  );
   const shouldInjectMentionDelegation =
     mentionedAgents.length > 0 && !agentPlugins.includes(AgentManagementIdentifier);
 
@@ -575,7 +604,11 @@ const resolveCompactTransportRequest = async (
   }
 
   const effectiveToolIds = [
-    ...new Set([...effectiveAgentPlugins, ...selectedTools.map((tool) => tool.identifier)]),
+    ...new Set([
+      ...effectiveAgentPlugins,
+      ...selectedTools.map((tool) => tool.identifier),
+      ...activatedToolIds,
+    ]),
   ];
 
   const pageAgentRuntimeConfig = isPageScope

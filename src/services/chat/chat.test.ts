@@ -1736,6 +1736,95 @@ describe('ChatService', () => {
         );
       });
 
+      it('should keep compact transport enabled when step context only contains reconstructed state', async () => {
+        const getChatCompletionSpy = vi
+          .spyOn(chatService, 'getChatCompletion')
+          .mockResolvedValue(new Response(''));
+        vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue([]);
+
+        await chatService.createAssistantMessage(
+          {
+            messages: [
+              {
+                content: 'Continue with activated runtime state',
+                createdAt: Date.now(),
+                id: 'user-1',
+                role: 'user',
+                updatedAt: Date.now(),
+              },
+            ] as UIChatMessage[],
+            resolvedAgentConfig: createMockResolvedConfig({
+              chatConfig: { memory: { enabled: false }, skillActivateMode: 'manual' },
+            }),
+          },
+          {
+            stepContext: {
+              activatedSkills: [{ id: 'skill-a', name: 'Skill A' }],
+              activatedToolIds: ['plugin-a'],
+              hasQueuedMessages: true,
+              todos: {
+                items: [{ status: 'todo', text: 'Keep going' }],
+                updatedAt: '2026-04-21T00:00:00.000Z',
+              },
+            },
+          },
+        );
+
+        expect(getChatCompletionSpy).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            compactSafe: true,
+            userMessageId: 'user-1',
+          }),
+        );
+      });
+
+      it('should keep compact transport blocked when step context contains page editor updates', async () => {
+        const getChatCompletionSpy = vi
+          .spyOn(chatService, 'getChatCompletion')
+          .mockResolvedValue(new Response(''));
+        vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue([]);
+        vi.spyOn(pageAgentRuntime, 'getCurrentDocId').mockReturnValue('doc-1');
+
+        await chatService.createAssistantMessage(
+          {
+            messages: [
+              {
+                content: 'Edit this page again',
+                createdAt: Date.now(),
+                id: 'user-1',
+                role: 'user',
+                updatedAt: Date.now(),
+              },
+            ] as UIChatMessage[],
+            resolvedAgentConfig: createMockResolvedConfig({
+              chatConfig: { memory: { enabled: false }, skillActivateMode: 'manual' },
+            }),
+          },
+          {
+            initialContext: {
+              pageEditor: {
+                markdown: '# Title',
+                metadata: { charCount: 7, lineCount: 1, title: 'Title' },
+                xml: '<doc />',
+              },
+            },
+            stepContext: {
+              stepPageEditor: { xml: '<updated-doc />' },
+            },
+          },
+        );
+
+        expect(getChatCompletionSpy).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            compactSafe: false,
+            documentId: 'doc-1',
+            userMessageId: 'user-1',
+          }),
+        );
+      });
+
       it('should keep compact transport blocked when page editor context has no document id', async () => {
         const getChatCompletionSpy = vi
           .spyOn(chatService, 'getChatCompletion')

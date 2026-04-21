@@ -614,7 +614,7 @@ describe('resolveTransportRequest', () => {
     );
   });
 
-  it('should include selected tools from persisted editorData in compact requests', async () => {
+  it('should include selected and activated tools from persisted state in compact requests', async () => {
     mockGetMessagesAndTopics.mockResolvedValue({
       messages: [
         {
@@ -629,6 +629,15 @@ describe('resolveTransportRequest', () => {
           createdAt: new Date(),
           id: 'prev-assistant',
           role: 'assistant',
+          updatedAt: new Date(),
+        },
+        {
+          content: 'Activated Plugin C',
+          createdAt: new Date(),
+          id: 'tool-1',
+          plugin: { identifier: 'lobe-activator' },
+          pluginState: { activatedTools: [{ identifier: 'plugin-c' }] },
+          role: 'tool',
           updatedAt: new Date(),
         },
         {
@@ -649,6 +658,12 @@ describe('resolveTransportRequest', () => {
         },
       ],
     });
+    const activatedToolManifest = {
+      api: [{ description: 'Run plugin C action', name: 'runC', parameters: {} }],
+      identifier: 'plugin-c',
+      meta: { title: 'Plugin C' },
+      type: 'default' as const,
+    };
     mockQueryPlugins.mockResolvedValue([
       {
         identifier: 'plugin-a',
@@ -662,10 +677,16 @@ describe('resolveTransportRequest', () => {
         runtimeType: 'default',
         type: 'plugin',
       },
+      {
+        identifier: 'plugin-c',
+        manifest: activatedToolManifest,
+        runtimeType: 'default',
+        type: 'plugin',
+      },
     ]);
     mockGenerateToolsDetailed.mockReturnValue({
-      enabledManifests: [toolManifest, selectedToolManifest],
-      enabledToolIds: ['plugin-a', 'plugin-b'],
+      enabledManifests: [toolManifest, selectedToolManifest, activatedToolManifest],
+      enabledToolIds: ['plugin-a', 'plugin-b', 'plugin-c'],
     });
 
     await resolveTransportRequest(createCompactRequest(), { serverDB, userId: 'user-1' });
@@ -674,14 +695,14 @@ describe('resolveTransportRequest', () => {
       expect.anything(),
       expect.objectContaining({
         agentConfig: expect.objectContaining({
-          plugins: ['plugin-a', 'plugin-b'],
+          plugins: ['plugin-a', 'plugin-b', 'plugin-c'],
         }),
       }),
     );
 
     expect(mockGenerateToolsDetailed).toHaveBeenCalledWith(
       expect.objectContaining({
-        toolIds: ['plugin-a', 'plugin-b'],
+        toolIds: ['plugin-a', 'plugin-b', 'plugin-c'],
       }),
     );
 
@@ -695,8 +716,8 @@ describe('resolveTransportRequest', () => {
           }),
         ],
         toolsConfig: {
-          manifests: [toolManifest, selectedToolManifest],
-          tools: ['plugin-a', 'plugin-b'],
+          manifests: [toolManifest, selectedToolManifest, activatedToolManifest],
+          tools: ['plugin-a', 'plugin-b', 'plugin-c'],
         },
       }),
     );
