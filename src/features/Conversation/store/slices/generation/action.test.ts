@@ -839,6 +839,148 @@ describe('Generation Actions', () => {
       );
     });
 
+    it('should preserve selected tools when regenerating a user message', async () => {
+      const { useChatStore } = await import('@/store/chat');
+      vi.mocked(useChatStore.getState).mockReturnValue({
+        messagesMap: {},
+        operations: {},
+        operationsByMessage: {},
+        cancelOperations: mockCancelOperations,
+        cancelOperation: mockCancelOperation,
+        deleteMessage: mockDeleteMessage,
+        switchMessageBranch: mockSwitchMessageBranch,
+        startOperation: mockStartOperation,
+        completeOperation: mockCompleteOperation,
+        failOperation: mockFailOperation,
+        internal_execAgentRuntime: mockInternalExecAgentRuntime,
+        isGatewayModeEnabled: mockIsGatewayModeEnabled,
+      } as any);
+
+      const context: ConversationContext = {
+        agentId: 'session-1',
+        topicId: 'topic-1',
+        threadId: null,
+      };
+
+      const store = createStore({ context });
+
+      act(() => {
+        store.setState({
+          displayMessages: [
+            {
+              id: 'msg-1',
+              role: 'user',
+              content: 'use tool',
+              editorData: {
+                root: {
+                  type: 'root',
+                  children: [
+                    {
+                      type: 'paragraph',
+                      children: [
+                        {
+                          type: 'action-tag',
+                          actionCategory: 'tool',
+                          actionLabel: 'Plugin A',
+                          actionType: 'plugin-a',
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        } as any);
+      });
+
+      await act(async () => {
+        await store.getState().regenerateUserMessage('msg-1');
+      });
+
+      expect(mockInternalExecAgentRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          initialContext: {
+            initialContext: {
+              selectedTools: [{ identifier: 'plugin-a', name: 'Plugin A' }],
+            },
+            phase: 'init',
+          },
+        }),
+      );
+    });
+
+    it('should preserve selected skills when regenerating a user message', async () => {
+      const { useChatStore } = await import('@/store/chat');
+      vi.mocked(useChatStore.getState).mockReturnValue({
+        messagesMap: {},
+        operations: {},
+        operationsByMessage: {},
+        cancelOperations: mockCancelOperations,
+        cancelOperation: mockCancelOperation,
+        deleteMessage: mockDeleteMessage,
+        switchMessageBranch: mockSwitchMessageBranch,
+        startOperation: mockStartOperation,
+        completeOperation: mockCompleteOperation,
+        failOperation: mockFailOperation,
+        internal_execAgentRuntime: mockInternalExecAgentRuntime,
+        isGatewayModeEnabled: mockIsGatewayModeEnabled,
+      } as any);
+
+      const context: ConversationContext = {
+        agentId: 'session-1',
+        topicId: 'topic-1',
+        threadId: null,
+      };
+
+      const store = createStore({ context });
+
+      act(() => {
+        store.setState({
+          displayMessages: [
+            {
+              id: 'msg-1',
+              role: 'user',
+              content: 'use skill',
+              editorData: {
+                root: {
+                  type: 'root',
+                  children: [
+                    {
+                      type: 'paragraph',
+                      children: [
+                        {
+                          type: 'action-tag',
+                          actionCategory: 'skill',
+                          actionLabel: 'Skill A',
+                          actionType: 'skill-a',
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        } as any);
+      });
+
+      await act(async () => {
+        await store.getState().regenerateUserMessage('msg-1');
+      });
+
+      expect(mockInternalExecAgentRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          initialContext: {
+            initialContext: {
+              selectedSkills: [{ identifier: 'skill-a', name: 'Skill A' }],
+            },
+            phase: 'init',
+          },
+        }),
+      );
+    });
+
     it('should use executeGatewayAgent when gateway mode is enabled', async () => {
       const { useChatStore } = await import('@/store/chat');
       vi.mocked(useChatStore.getState).mockReturnValue({
