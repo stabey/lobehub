@@ -39,6 +39,7 @@ import {
   klavisStoreSelectors,
   lobehubSkillStoreSelectors,
 } from '@/store/tool/selectors';
+import { pageAgentRuntime } from '@/store/tool/slices/builtin/executors/lobe-page-agent';
 import { getUserStoreState, useUserStore } from '@/store/user';
 import {
   settingsSelectors,
@@ -388,6 +389,9 @@ class ChatService {
         ...options,
         agentId: targetAgentId,
         compactSafe,
+        documentId: options?.initialContext?.pageEditor
+          ? pageAgentRuntime.getCurrentDocId()
+          : undefined,
         topicId,
         userMessageId,
       },
@@ -430,6 +434,7 @@ class ChatService {
       agentId,
       assistantMessageId,
       compactSafe,
+      documentId,
       signal,
       responseAnimation,
       threadId,
@@ -540,6 +545,7 @@ class ChatService {
           agentId: agentId!,
           assistantMessageId: assistantMessageId!,
           topicId: topicId!,
+          documentId,
           threadId,
           userMessageId: userMessageId!,
         });
@@ -696,6 +702,7 @@ class ChatService {
     agentId,
     assistantMessageId,
     compactSafe,
+    documentId,
     topicId,
     transportConfig,
     userMessageId,
@@ -703,6 +710,7 @@ class ChatService {
     agentId?: string;
     assistantMessageId?: string;
     compactSafe?: boolean;
+    documentId?: string;
     topicId?: string;
     transportConfig: TransportConfig;
     userMessageId?: string;
@@ -713,7 +721,8 @@ class ChatService {
       agentId &&
       assistantMessageId &&
       topicId &&
-      userMessageId
+      userMessageId &&
+      (!documentId || documentId.length > 0)
     );
   };
 

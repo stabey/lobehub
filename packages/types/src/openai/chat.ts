@@ -124,6 +124,7 @@ export interface StagedChatTransportRequest {
 export interface CompactTopicChatTransportContext {
   agentId: string;
   assistantMessageId: string;
+  documentId?: string;
   scope: 'topic';
   threadId?: string;
   topicId: string;

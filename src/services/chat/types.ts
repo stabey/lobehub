@@ -8,6 +8,7 @@ import {
 export interface CompactTransportOptions {
   assistantMessageId?: string;
   compactSafe?: boolean;
+  documentId?: string;
   userMessageId?: string;
 }
 
