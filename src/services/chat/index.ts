@@ -349,8 +349,6 @@ class ChatService {
     });
     const hasBlockingInitialContextData = !!(
       options?.initialContext?.pageEditor ||
-      options?.initialContext?.selectedSkills?.length ||
-      options?.initialContext?.selectedTools?.length ||
       ((options?.initialContext?.injectedManifests?.length ||
         options?.initialContext?.mentionedAgents?.length) &&
         !hasCompactCompatibleMentionContext)

@@ -16,7 +16,7 @@ import type {
   UserMemoryData,
 } from '@lobechat/context-engine';
 import type { PageContentContext } from '@lobechat/prompts';
-import type { UIChatMessage } from '@lobechat/types';
+import type { RuntimeSelectedSkill, RuntimeSelectedTool, UIChatMessage } from '@lobechat/types';
 
 /**
  * Model capability checker functions for server-side
@@ -129,11 +129,15 @@ export interface ServerMessagesEngineParams {
   // ========== Skills ==========
   /** Skills configuration for <available_skills> injection */
   skillsConfig?: { enabledSkills?: SkillMeta[] };
+  /** Skills explicitly selected by the user for the current request */
+  selectedSkills?: RuntimeSelectedSkill[];
   /** Tool discovery configuration for <available_tools> injection */
   toolDiscoveryConfig?: ToolDiscoveryConfig;
   // ========== Tools ==========
   /** Tools configuration */
   toolsConfig?: ServerToolsConfig;
+  /** Tools explicitly selected by the user for the current request */
+  selectedTools?: RuntimeSelectedTool[];
   // ========== Topic References ==========
   /** Topic reference summaries to inject into last user message */
   topicReferences?: TopicReferenceItem[];

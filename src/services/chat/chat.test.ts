@@ -1602,7 +1602,7 @@ describe('ChatService', () => {
               },
             ] as UIChatMessage[],
             resolvedAgentConfig: createMockResolvedConfig({
-              chatConfig: { skillActivateMode: 'manual' },
+              chatConfig: { memory: { enabled: false }, skillActivateMode: 'manual' },
               enabledToolIds: [AgentManagementIdentifier],
               plugins: [AgentManagementIdentifier],
             }),
@@ -1611,6 +1611,121 @@ describe('ChatService', () => {
             initialContext: {
               injectedManifests: [createCallAgentManifest()],
               mentionedAgents: [{ id: 'agent-b', name: 'Agent B' }],
+            },
+          },
+        );
+
+        expect(getChatCompletionSpy).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            compactSafe: false,
+            userMessageId: 'user-1',
+          }),
+        );
+      });
+
+      it('should keep compact transport enabled when selected tools are present', async () => {
+        const getChatCompletionSpy = vi
+          .spyOn(chatService, 'getChatCompletion')
+          .mockResolvedValue(new Response(''));
+        vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue([]);
+
+        await chatService.createAssistantMessage(
+          {
+            messages: [
+              {
+                content: 'Use a specific tool',
+                createdAt: Date.now(),
+                id: 'user-1',
+                role: 'user',
+                updatedAt: Date.now(),
+              },
+            ] as UIChatMessage[],
+            resolvedAgentConfig: createMockResolvedConfig({
+              chatConfig: { memory: { enabled: false }, skillActivateMode: 'manual' },
+            }),
+          },
+          {
+            initialContext: {
+              selectedTools: [{ identifier: 'plugin-a', name: 'Plugin A' }],
+            },
+          },
+        );
+
+        expect(getChatCompletionSpy).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            compactSafe: true,
+            userMessageId: 'user-1',
+          }),
+        );
+      });
+
+      it('should keep compact transport enabled when selected skills are present', async () => {
+        const getChatCompletionSpy = vi
+          .spyOn(chatService, 'getChatCompletion')
+          .mockResolvedValue(new Response(''));
+        vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue([]);
+
+        await chatService.createAssistantMessage(
+          {
+            messages: [
+              {
+                content: 'Use a specific skill',
+                createdAt: Date.now(),
+                id: 'user-1',
+                role: 'user',
+                updatedAt: Date.now(),
+              },
+            ] as UIChatMessage[],
+            resolvedAgentConfig: createMockResolvedConfig({
+              chatConfig: { memory: { enabled: false }, skillActivateMode: 'manual' },
+            }),
+          },
+          {
+            initialContext: {
+              selectedSkills: [{ identifier: 'skill-a', name: 'Skill A' }],
+            },
+          },
+        );
+
+        expect(getChatCompletionSpy).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            compactSafe: true,
+            userMessageId: 'user-1',
+          }),
+        );
+      });
+
+      it('should keep compact transport blocked when page editor context is present', async () => {
+        const getChatCompletionSpy = vi
+          .spyOn(chatService, 'getChatCompletion')
+          .mockResolvedValue(new Response(''));
+        vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue([]);
+
+        await chatService.createAssistantMessage(
+          {
+            messages: [
+              {
+                content: 'Edit this page',
+                createdAt: Date.now(),
+                id: 'user-1',
+                role: 'user',
+                updatedAt: Date.now(),
+              },
+            ] as UIChatMessage[],
+            resolvedAgentConfig: createMockResolvedConfig({
+              chatConfig: { memory: { enabled: false }, skillActivateMode: 'manual' },
+            }),
+          },
+          {
+            initialContext: {
+              pageEditor: {
+                markdown: '# Title',
+                metadata: { charCount: 7, lineCount: 1, title: 'Title' },
+                xml: '<doc />',
+              },
             },
           },
         );

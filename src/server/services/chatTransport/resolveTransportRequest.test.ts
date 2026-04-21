@@ -21,9 +21,11 @@ const {
   mockServerMessagesEngine,
   mockStageStoreCtor,
   mockFindAllSkills,
+  mockFindSkillByIdentifier,
 } = vi.hoisted(() => ({
   mockCreateServerAgentToolsEngine: vi.fn(),
   mockFindAllSkills: vi.fn(),
+  mockFindSkillByIdentifier: vi.fn(),
   mockGenerateSkillSet: vi.fn(),
   mockGenerateToolsDetailed: vi.fn(),
   mockGetAgentConfigById: vi.fn(),
@@ -43,6 +45,7 @@ vi.mock('@lobechat/builtin-skills', () => ({
 }));
 
 vi.mock('@lobechat/builtin-tools', () => ({
+  builtinTools: [],
   manualModeExcludeToolIds: ['manual-excluded-tool'],
 }));
 
@@ -70,6 +73,7 @@ vi.mock('model-bank', () => ({
 vi.mock('@/database/models/agentSkill', () => ({
   AgentSkillModel: vi.fn().mockImplementation(() => ({
     findAll: mockFindAllSkills,
+    findByIdentifier: mockFindSkillByIdentifier,
   })),
 }));
 
@@ -153,6 +157,13 @@ const toolManifest = {
   type: 'default' as const,
 };
 
+const selectedToolManifest = {
+  api: [{ description: 'Run plugin B action', name: 'runB', parameters: {} }],
+  identifier: 'plugin-b',
+  meta: { title: 'Plugin B' },
+  type: 'default' as const,
+};
+
 const mentionEditorData = {
   root: {
     children: [
@@ -162,6 +173,44 @@ const mentionEditorData = {
             label: 'Agent B',
             metadata: { id: 'agent-b', type: 'agent' },
             type: 'mention',
+          },
+        ],
+        type: 'paragraph',
+      },
+    ],
+    type: 'root',
+  },
+};
+
+const selectedToolEditorData = {
+  root: {
+    children: [
+      {
+        children: [
+          {
+            actionCategory: 'tool',
+            actionLabel: 'Plugin B',
+            actionType: 'plugin-b',
+            type: 'action-tag',
+          },
+        ],
+        type: 'paragraph',
+      },
+    ],
+    type: 'root',
+  },
+};
+
+const selectedSkillEditorData = {
+  root: {
+    children: [
+      {
+        children: [
+          {
+            actionCategory: 'skill',
+            actionLabel: 'Skill B',
+            actionType: 'skill-b',
+            type: 'action-tag',
           },
         ],
         type: 'paragraph',
@@ -320,6 +369,7 @@ describe('resolveTransportRequest', () => {
       data: [],
       total: 0,
     });
+    mockFindSkillByIdentifier.mockResolvedValue(undefined);
 
     mockGetLobehubSkillManifests.mockResolvedValue([lobehubSkillManifest]);
     mockGetKlavisManifests.mockResolvedValue([klavisManifest]);
@@ -519,6 +569,154 @@ describe('resolveTransportRequest', () => {
         agentManagementContext: {
           mentionedAgents: [{ id: 'agent-b', name: 'Agent B' }],
         },
+      }),
+    );
+  });
+
+  it('should include selected tools from persisted editorData in compact requests', async () => {
+    mockGetMessagesAndTopics.mockResolvedValue({
+      messages: [
+        {
+          content: 'Earlier question',
+          createdAt: new Date(),
+          id: 'prev-user',
+          role: 'user',
+          updatedAt: new Date(),
+        },
+        {
+          content: 'Earlier answer',
+          createdAt: new Date(),
+          id: 'prev-assistant',
+          role: 'assistant',
+          updatedAt: new Date(),
+        },
+        {
+          content: 'Use Plugin B',
+          createdAt: new Date(),
+          editorData: selectedToolEditorData,
+          id: 'user-1',
+          role: 'user',
+          updatedAt: new Date(),
+        },
+        {
+          content: '',
+          createdAt: new Date(),
+          id: 'assistant-1',
+          parentId: 'user-1',
+          role: 'assistant',
+          updatedAt: new Date(),
+        },
+      ],
+    });
+    mockQueryPlugins.mockResolvedValue([
+      {
+        identifier: 'plugin-a',
+        manifest: toolManifest,
+        runtimeType: 'default',
+        type: 'plugin',
+      },
+      {
+        identifier: 'plugin-b',
+        manifest: selectedToolManifest,
+        runtimeType: 'default',
+        type: 'plugin',
+      },
+    ]);
+    mockGenerateToolsDetailed.mockReturnValue({
+      enabledManifests: [toolManifest, selectedToolManifest],
+      enabledToolIds: ['plugin-a', 'plugin-b'],
+    });
+
+    await resolveTransportRequest(createCompactRequest(), { serverDB, userId: 'user-1' });
+
+    expect(mockCreateServerAgentToolsEngine).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        agentConfig: expect.objectContaining({
+          plugins: ['plugin-a', 'plugin-b'],
+        }),
+      }),
+    );
+
+    expect(mockGenerateToolsDetailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolIds: ['plugin-a', 'plugin-b'],
+      }),
+    );
+
+    expect(mockServerMessagesEngine).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedTools: [
+          expect.objectContaining({
+            content: expect.stringContaining('Run plugin B action'),
+            identifier: 'plugin-b',
+            name: 'Plugin B',
+          }),
+        ],
+        toolsConfig: {
+          manifests: [toolManifest, selectedToolManifest],
+          tools: ['plugin-a', 'plugin-b'],
+        },
+      }),
+    );
+  });
+
+  it('should include selected skills from persisted editorData in compact requests', async () => {
+    mockGetMessagesAndTopics.mockResolvedValue({
+      messages: [
+        {
+          content: 'Earlier question',
+          createdAt: new Date(),
+          id: 'prev-user',
+          role: 'user',
+          updatedAt: new Date(),
+        },
+        {
+          content: 'Earlier answer',
+          createdAt: new Date(),
+          id: 'prev-assistant',
+          role: 'assistant',
+          updatedAt: new Date(),
+        },
+        {
+          content: 'Use Skill B',
+          createdAt: new Date(),
+          editorData: selectedSkillEditorData,
+          id: 'user-1',
+          role: 'user',
+          updatedAt: new Date(),
+        },
+        {
+          content: '',
+          createdAt: new Date(),
+          id: 'assistant-1',
+          parentId: 'user-1',
+          role: 'assistant',
+          updatedAt: new Date(),
+        },
+      ],
+    });
+    mockFindSkillByIdentifier.mockResolvedValue({
+      content: 'Skill B instructions',
+      id: 'skill-db-1',
+      identifier: 'skill-b',
+      manifest: null,
+      name: 'Skill B',
+      resources: null,
+    });
+
+    await resolveTransportRequest(createCompactRequest(), { serverDB, userId: 'user-1' });
+
+    expect(mockFindSkillByIdentifier).toHaveBeenCalledWith('skill-b');
+    expect(mockServerMessagesEngine).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedSkills: [
+          expect.objectContaining({
+            content: 'Skill B instructions',
+            identifier: 'skill-b',
+            name: 'Skill B',
+          }),
+        ],
       }),
     );
   });

@@ -3,14 +3,22 @@ import {
   AgentManagementIdentifier,
   createCallAgentManifest,
 } from '@lobechat/builtin-tool-agent-management';
-import { manualModeExcludeToolIds } from '@lobechat/builtin-tools';
+import {
+  CredsIdentifier,
+  type CredSummary,
+  injectCredsContext,
+} from '@lobechat/builtin-tool-creds';
+import { builtinTools, manualModeExcludeToolIds } from '@lobechat/builtin-tools';
 import type { LobeToolManifest } from '@lobechat/context-engine';
 import { SkillEngine } from '@lobechat/context-engine';
+import { resourcesTreePrompt } from '@lobechat/prompts';
 import type {
   ChatStreamPayload,
   ChatTransportRequest,
   CompactTopicChatTransportRequest,
   RuntimeMentionedAgent,
+  RuntimeSelectedSkill,
+  RuntimeSelectedTool,
 } from '@lobechat/types';
 import { LOBE_DEFAULT_MODEL_LIST } from 'model-bank';
 
@@ -59,6 +67,186 @@ const mapAgentDocuments = (documents: AgentDocumentWithRules[]) => {
     policyLoadFormat: document.policyLoadFormat,
     title: document.title,
   }));
+};
+
+interface ParsedActionTag {
+  category: string;
+  label: string;
+  type: string;
+}
+
+const parseActionTagsFromEditorData = (
+  editorData: Record<string, any> | null | undefined,
+): ParsedActionTag[] => {
+  if (!editorData) return [];
+
+  const actionTags: ParsedActionTag[] = [];
+
+  const walk = (node: any): void => {
+    if (!node) return;
+
+    if (node.type === 'action-tag') {
+      actionTags.push({
+        category: node.actionCategory,
+        label: node.actionLabel,
+        type: node.actionType,
+      });
+    }
+
+    if (Array.isArray(node.children)) {
+      for (const child of node.children) {
+        walk(child);
+      }
+    }
+  };
+
+  walk(editorData.root);
+
+  return actionTags;
+};
+
+const parseSelectedSkillsFromEditorData = (
+  editorData: Record<string, any> | null | undefined,
+): RuntimeSelectedSkill[] => {
+  const actionTags = parseActionTagsFromEditorData(editorData);
+  const selectedSkills = actionTags.filter((tag) => tag.category === 'skill');
+
+  if (selectedSkills.length === 0) return [];
+
+  const seen = new Set<string>();
+
+  return selectedSkills.reduce<RuntimeSelectedSkill[]>((acc, skill) => {
+    const identifier = String(skill.type);
+    if (!identifier || seen.has(identifier)) return acc;
+
+    seen.add(identifier);
+    acc.push({
+      identifier,
+      name: skill.label || identifier,
+    });
+
+    return acc;
+  }, []);
+};
+
+const parseSelectedToolsFromEditorData = (
+  editorData: Record<string, any> | null | undefined,
+): RuntimeSelectedTool[] => {
+  const actionTags = parseActionTagsFromEditorData(editorData);
+  const selectedTools = actionTags.filter((tag) => tag.category === 'tool');
+
+  if (selectedTools.length === 0) return [];
+
+  const seen = new Set<string>();
+
+  return selectedTools.reduce<RuntimeSelectedTool[]>((acc, tool) => {
+    const identifier = String(tool.type);
+    if (!identifier || seen.has(identifier)) return acc;
+
+    seen.add(identifier);
+    acc.push({
+      identifier,
+      name: tool.label || identifier,
+    });
+
+    return acc;
+  }, []);
+};
+
+const formatSelectedToolContent = (manifest: LobeToolManifest): string | undefined => {
+  const parts: string[] = [];
+
+  if (manifest.systemRole) {
+    parts.push(manifest.systemRole);
+  }
+
+  if (manifest.api?.length > 0) {
+    const apiDescriptions = manifest.api
+      .map((api) => `- ${api.name}: ${api.description}`)
+      .join('\n');
+    parts.push(`Available APIs:\n${apiDescriptions}`);
+  }
+
+  const content = parts.join('\n\n');
+
+  return content || undefined;
+};
+
+const resolveSelectedToolsWithContent = (
+  selectedTools: RuntimeSelectedTool[],
+  installedPlugins: Awaited<ReturnType<PluginModel['query']>>,
+): RuntimeSelectedTool[] => {
+  const builtinManifestMap = new Map(
+    builtinTools.map((tool) => [tool.identifier, tool.manifest as LobeToolManifest]),
+  );
+  const installedManifestMap = new Map(
+    installedPlugins.map((plugin) => [plugin.identifier, plugin.manifest as LobeToolManifest]),
+  );
+
+  return selectedTools.map((tool) => {
+    const manifest =
+      installedManifestMap.get(tool.identifier) ?? builtinManifestMap.get(tool.identifier);
+    if (!manifest) return tool;
+
+    const content = formatSelectedToolContent(manifest);
+
+    return content ? { ...tool, content } : tool;
+  });
+};
+
+const resolveSelectedSkillsWithContent = async ({
+  marketService,
+  selectedSkills,
+  skillModel,
+}: {
+  marketService: MarketService;
+  selectedSkills: RuntimeSelectedSkill[];
+  skillModel: AgentSkillModel;
+}): Promise<RuntimeSelectedSkill[]> => {
+  if (selectedSkills.length === 0) return [];
+
+  const requiresCredsContext = selectedSkills.some((skill) => skill.identifier === CredsIdentifier);
+
+  let credsSummary: CredSummary[] = [];
+
+  if (requiresCredsContext) {
+    const credsResult = await marketService.market.creds.list().catch(() => ({ data: [] }));
+    credsSummary = (credsResult.data ?? []).map((cred) => ({
+      description: cred.description,
+      key: cred.key,
+      name: cred.name,
+      type: cred.type,
+    }));
+  }
+
+  return Promise.all(
+    selectedSkills.map(async (skill) => {
+      const builtinSkill = builtinSkills.find((item) => item.identifier === skill.identifier);
+
+      if (builtinSkill) {
+        const content =
+          skill.identifier === CredsIdentifier
+            ? injectCredsContext(builtinSkill.content, {
+                creds: credsSummary,
+                settingsUrl: '/settings/creds',
+              })
+            : builtinSkill.content;
+
+        return content ? { ...skill, content } : skill;
+      }
+
+      const detail = await skillModel.findByIdentifier(skill.identifier);
+
+      if (!detail?.content) return skill;
+
+      const hasResources = !!(detail.resources && Object.keys(detail.resources).length > 0);
+      const content = hasResources
+        ? detail.content + '\n\n' + resourcesTreePrompt(detail.name, detail.resources)
+        : detail.content;
+
+      return content ? { ...skill, content } : skill;
+    }),
+  );
 };
 
 const parseMentionedAgentsFromEditorData = (
@@ -178,11 +366,23 @@ const resolveCompactTransportRequest = async (
   const userTimezone = generalSettings?.timezone;
   const agentPlugins = agentConfig.plugins ?? [];
   const mentionedAgents = parseMentionedAgentsFromEditorData(userMessage.editorData);
+  const selectedSkills = await resolveSelectedSkillsWithContent({
+    marketService,
+    selectedSkills: parseSelectedSkillsFromEditorData(userMessage.editorData),
+    skillModel: agentSkillModel,
+  });
+  const selectedTools = resolveSelectedToolsWithContent(
+    parseSelectedToolsFromEditorData(userMessage.editorData),
+    installedPlugins,
+  );
   const shouldInjectMentionDelegation =
     mentionedAgents.length > 0 && !agentPlugins.includes(AgentManagementIdentifier);
   const effectiveAgentPlugins = shouldInjectMentionDelegation
     ? [...new Set([...agentPlugins, AgentManagementIdentifier])]
     : agentPlugins;
+  const effectiveToolIds = [
+    ...new Set([...effectiveAgentPlugins, ...selectedTools.map((tool) => tool.identifier)]),
+  ];
   const hasEnabledKnowledgeBases =
     agentConfig.knowledgeBases?.some((knowledgeBase) => knowledgeBase.enabled === true) ?? false;
   const { compact: _compact, transport: _transport, ...payload } = request;
@@ -212,7 +412,7 @@ const resolveCompactTransportRequest = async (
       additionalManifests,
       agentConfig: {
         chatConfig: agentConfig.chatConfig ?? undefined,
-        plugins: effectiveAgentPlugins,
+        plugins: effectiveToolIds,
       },
       globalMemoryEnabled: false,
       hasAgentDocuments: agentDocuments.length > 0,
@@ -223,13 +423,11 @@ const resolveCompactTransportRequest = async (
     },
   );
 
-  const pluginIds = effectiveAgentPlugins;
-
   const toolsResult = toolsEngine.generateToolsDetailed({
     excludeDefaultToolIds: manualModeExcludeToolIds,
     model,
     provider,
-    toolIds: pluginIds,
+    toolIds: effectiveToolIds,
   });
 
   const builtinSkillMetas = builtinSkills.map((skill) => ({
@@ -276,6 +474,8 @@ const resolveCompactTransportRequest = async (
     messages: runtimeMessages,
     model,
     provider,
+    selectedSkills: selectedSkills.length > 0 ? selectedSkills : undefined,
+    selectedTools: selectedTools.length > 0 ? selectedTools : undefined,
     skillsConfig: enabledSkills.length > 0 ? { enabledSkills } : undefined,
     systemRole: agentConfig.systemRole ?? undefined,
     toolsConfig: {

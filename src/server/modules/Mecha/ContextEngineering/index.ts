@@ -61,8 +61,10 @@ export const serverMessagesEngine = async ({
   knowledge,
   agentDocuments,
   skillsConfig,
+  selectedSkills,
   toolDiscoveryConfig,
   toolsConfig,
+  selectedTools,
   capabilities,
   userMemory,
   agentBuilderContext,
@@ -146,6 +148,8 @@ export const serverMessagesEngine = async ({
 
     // Skills configuration
     ...(skillsConfig?.enabledSkills && skillsConfig.enabledSkills.length > 0 && { skillsConfig }),
+    ...(selectedSkills && { selectedSkills }),
+    ...(selectedTools && { selectedTools }),
 
     // Topic references
     ...(topicReferences && topicReferences.length > 0 && { topicReferences }),
