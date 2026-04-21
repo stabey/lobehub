@@ -32,6 +32,7 @@ import {
 } from '@/store/agent/selectors';
 import { aiProviderSelectors, getAiInfraStoreState } from '@/store/aiInfra';
 import { getChatStoreState } from '@/store/chat';
+import { getDocumentStoreState } from '@/store/document';
 import { serverConfigSelectors } from '@/store/serverConfig/selectors';
 import { getToolStoreState } from '@/store/tool';
 import {
@@ -337,6 +338,9 @@ class ChatService {
     const hasCompactCompatibleMentionContext = this.isCompactCompatibleMentionContext(
       options?.initialContext,
     );
+    const pageEditorDocumentId = options?.initialContext?.pageEditor
+      ? pageAgentRuntime.getCurrentDocId()
+      : undefined;
     const hasUnsupportedCompactTools = enabledToolIds.some((id) => {
       if (
         id === AgentManagementIdentifier &&
@@ -346,10 +350,14 @@ class ChatService {
         return false;
       }
 
+      if (id === PageAgentIdentifier && pageEditorDocumentId) {
+        return false;
+      }
+
       return UNSUPPORTED_COMPACT_TRANSPORT_TOOL_IDS.has(id);
     });
     const hasBlockingInitialContextData = !!(
-      options?.initialContext?.pageEditor ||
+      (options?.initialContext?.pageEditor && !pageEditorDocumentId) ||
       ((options?.initialContext?.injectedManifests?.length ||
         options?.initialContext?.mentionedAgents?.length) &&
         !hasCompactCompatibleMentionContext)
@@ -375,6 +383,10 @@ class ChatService {
       !hasBlockingInitialContextData &&
       !hasStepContextData;
 
+    if (compactSafe && pageEditorDocumentId) {
+      await getDocumentStoreState().performSave(pageEditorDocumentId);
+    }
+
     return this.getChatCompletion(
       {
         ...params,
@@ -389,9 +401,7 @@ class ChatService {
         ...options,
         agentId: targetAgentId,
         compactSafe,
-        documentId: options?.initialContext?.pageEditor
-          ? pageAgentRuntime.getCurrentDocId()
-          : undefined,
+        documentId: pageEditorDocumentId,
         topicId,
         userMessageId,
       },
@@ -536,6 +546,7 @@ class ChatService {
           agentId,
           assistantMessageId,
           compactSafe,
+          documentId,
           topicId,
           transportConfig,
           userMessageId,

@@ -17,12 +17,20 @@ import { useAgentStore } from '@/store/agent';
 import { agentSelectors, chatConfigByIdSelectors } from '@/store/agent/selectors';
 import { aiModelSelectors, aiProviderSelectors } from '@/store/aiInfra';
 import { useChatStore } from '@/store/chat';
+import { getDocumentStoreState } from '@/store/document';
 import { useToolStore } from '@/store/tool';
+import { pageAgentRuntime } from '@/store/tool/slices/builtin/executors/lobe-page-agent';
 import { settingsSelectors } from '@/store/user/selectors';
 
 import { chatService } from './index';
 import * as mechaModule from './mecha';
 import { type ResolvedAgentConfig } from './mecha';
+
+vi.mock('@/store/document', () => ({
+  getDocumentStoreState: vi.fn(() => ({
+    performSave: vi.fn().mockResolvedValue(undefined),
+  })),
+}));
 
 // Helper to compute expected date content from SystemDateProvider
 const getCurrentDateContent = () => {
@@ -1698,11 +1706,13 @@ describe('ChatService', () => {
         );
       });
 
-      it('should keep compact transport blocked when page editor context is present', async () => {
+      it('should keep compact transport blocked when page editor context has no document id', async () => {
         const getChatCompletionSpy = vi
           .spyOn(chatService, 'getChatCompletion')
           .mockResolvedValue(new Response(''));
         vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue([]);
+
+        vi.spyOn(pageAgentRuntime, 'getCurrentDocId').mockReturnValue(undefined);
 
         await chatService.createAssistantMessage(
           {
@@ -1737,6 +1747,53 @@ describe('ChatService', () => {
             userMessageId: 'user-1',
           }),
         );
+      });
+
+      it('should keep compact transport enabled when page editor context has a document id', async () => {
+        const getChatCompletionSpy = vi
+          .spyOn(chatService, 'getChatCompletion')
+          .mockResolvedValue(new Response(''));
+        vi.spyOn(mechaModule, 'contextEngineering').mockResolvedValue([]);
+        const performSave = vi.fn().mockResolvedValue(undefined);
+        vi.mocked(getDocumentStoreState).mockReturnValue({ performSave } as any);
+
+        vi.spyOn(pageAgentRuntime, 'getCurrentDocId').mockReturnValue('doc-1');
+
+        await chatService.createAssistantMessage(
+          {
+            messages: [
+              {
+                content: 'Edit this page',
+                createdAt: Date.now(),
+                id: 'user-1',
+                role: 'user',
+                updatedAt: Date.now(),
+              },
+            ] as UIChatMessage[],
+            resolvedAgentConfig: createMockResolvedConfig({
+              chatConfig: { memory: { enabled: false }, skillActivateMode: 'manual' },
+            }),
+          },
+          {
+            initialContext: {
+              pageEditor: {
+                markdown: '# Title',
+                metadata: { charCount: 7, lineCount: 1, title: 'Title' },
+                xml: '<doc />',
+              },
+            },
+          },
+        );
+
+        expect(getChatCompletionSpy).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            compactSafe: true,
+            documentId: 'doc-1',
+            userMessageId: 'user-1',
+          }),
+        );
+        expect(performSave).toHaveBeenCalledWith('doc-1');
       });
     });
   });

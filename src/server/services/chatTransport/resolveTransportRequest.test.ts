@@ -22,10 +22,12 @@ const {
   mockStageStoreCtor,
   mockFindAllSkills,
   mockFindSkillByIdentifier,
+  mockGetDocumentById,
 } = vi.hoisted(() => ({
   mockCreateServerAgentToolsEngine: vi.fn(),
   mockFindAllSkills: vi.fn(),
   mockFindSkillByIdentifier: vi.fn(),
+  mockGetDocumentById: vi.fn(),
   mockGenerateSkillSet: vi.fn(),
   mockGenerateToolsDetailed: vi.fn(),
   mockGetAgentConfigById: vi.fn(),
@@ -128,6 +130,12 @@ vi.mock('@/server/services/klavis', () => ({
 vi.mock('@/server/services/market', () => ({
   MarketService: vi.fn().mockImplementation(() => ({
     getLobehubSkillManifests: mockGetLobehubSkillManifests,
+  })),
+}));
+
+vi.mock('@/server/services/document', () => ({
+  DocumentService: vi.fn().mockImplementation(() => ({
+    getDocumentById: mockGetDocumentById,
   })),
 }));
 
@@ -241,24 +249,28 @@ const rebuiltMessages = [
 
 const createCompactRequest = (
   overrides: Partial<CompactTopicChatTransportRequest> = {},
-): CompactTopicChatTransportRequest => ({
-  compact: {
-    agentId: 'agent-1',
-    assistantMessageId: 'assistant-1',
-    scope: 'topic',
-    threadId: 'thread-1',
-    topicId: 'topic-1',
-    userMessageId: 'user-1',
-    version: 1,
-    ...overrides.compact,
-  },
-  model: 'claude-sonnet-4-6',
-  provider: 'anthropic',
-  stream: true,
-  temperature: 0.6,
-  transport: 'compact',
-  ...overrides,
-});
+): CompactTopicChatTransportRequest => {
+  const { compact: compactOverrides, ...requestOverrides } = overrides;
+
+  return {
+    compact: {
+      agentId: 'agent-1',
+      assistantMessageId: 'assistant-1',
+      scope: 'topic',
+      threadId: 'thread-1',
+      topicId: 'topic-1',
+      userMessageId: 'user-1',
+      version: 1,
+      ...compactOverrides,
+    },
+    model: 'claude-sonnet-4-6',
+    provider: 'anthropic',
+    stream: true,
+    temperature: 0.6,
+    transport: 'compact',
+    ...requestOverrides,
+  };
+};
 
 describe('resolveTransportRequest', () => {
   beforeEach(() => {
@@ -370,6 +382,7 @@ describe('resolveTransportRequest', () => {
       total: 0,
     });
     mockFindSkillByIdentifier.mockResolvedValue(undefined);
+    mockGetDocumentById.mockResolvedValue(undefined);
 
     mockGetLobehubSkillManifests.mockResolvedValue([lobehubSkillManifest]);
     mockGetKlavisManifests.mockResolvedValue([klavisManifest]);
@@ -717,6 +730,43 @@ describe('resolveTransportRequest', () => {
             name: 'Skill B',
           }),
         ],
+      }),
+    );
+  });
+
+  it('should inject persisted page editor context when compact request includes documentId', async () => {
+    mockGetDocumentById.mockResolvedValue({
+      content: '# Page Title\n\nDocument body',
+      editorData: { root: { children: [] } },
+      filename: 'page.md',
+      title: 'Page Title',
+      totalCharCount: 27,
+      totalLineCount: 3,
+    });
+
+    await resolveTransportRequest(
+      createCompactRequest({ compact: { documentId: 'doc-1' } as any }),
+      { serverDB, userId: 'user-1' },
+    );
+
+    expect(mockGetDocumentById).toHaveBeenCalledWith('doc-1');
+    expect(mockGenerateToolsDetailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toolIds: expect.arrayContaining(['plugin-a', 'lobe-page-agent']),
+      }),
+    );
+    expect(mockServerMessagesEngine).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enableHistoryCount: false,
+        pageContentContext: expect.objectContaining({
+          markdown: '# Page Title\n\nDocument body',
+          metadata: expect.objectContaining({
+            charCount: 27,
+            lineCount: 3,
+            title: 'Page Title',
+          }),
+        }),
+        systemRole: expect.stringContaining('You are a helpful assistant.'),
       }),
     );
   });

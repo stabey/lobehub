@@ -1,3 +1,4 @@
+import { BUILTIN_AGENT_SLUGS, getAgentRuntimeConfig } from '@lobechat/builtin-agents';
 import { builtinSkills } from '@lobechat/builtin-skills';
 import {
   AgentManagementIdentifier,
@@ -8,9 +9,10 @@ import {
   type CredSummary,
   injectCredsContext,
 } from '@lobechat/builtin-tool-creds';
+import { PageAgentIdentifier } from '@lobechat/builtin-tool-page-agent';
 import { builtinTools, manualModeExcludeToolIds } from '@lobechat/builtin-tools';
-import type { LobeToolManifest } from '@lobechat/context-engine';
-import { SkillEngine } from '@lobechat/context-engine';
+import { type LobeToolManifest, SkillEngine } from '@lobechat/context-engine';
+import type { PageContentContext } from '@lobechat/prompts';
 import { resourcesTreePrompt } from '@lobechat/prompts';
 import type {
   ChatStreamPayload,
@@ -33,6 +35,7 @@ import { serverMessagesEngine } from '@/server/modules/Mecha/ContextEngineering'
 import { AgentService } from '@/server/services/agent';
 import { AgentDocumentsService } from '@/server/services/agentDocuments';
 import { AiChatService } from '@/server/services/aiChat';
+import { DocumentService } from '@/server/services/document';
 import { KlavisService } from '@/server/services/klavis';
 import { MarketService } from '@/server/services/market';
 
@@ -249,6 +252,159 @@ const resolveSelectedSkillsWithContent = async ({
   );
 };
 
+const escapeXmlText = (value: string) =>
+  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+
+const escapeXmlAttribute = (value: string) =>
+  escapeXmlText(value).replaceAll('"', '&quot;').replaceAll("'", '&apos;');
+
+const buildXmlAttributes = (attributes: Record<string, number | string | undefined>) => {
+  return Object.entries(attributes)
+    .filter(([, value]) => value !== undefined && value !== '')
+    .map(([key, value]) => ` ${key}="${escapeXmlAttribute(String(value))}"`)
+    .join('');
+};
+
+const serializePageEditorNodeToXml = (node: Record<string, any> | null | undefined): string => {
+  if (!node || typeof node !== 'object') return '';
+
+  if (node.type === 'text') {
+    return escapeXmlText(String(node.text ?? ''));
+  }
+
+  if (node.type === 'linebreak') {
+    return '<br />';
+  }
+
+  const childXml = Array.isArray(node.children)
+    ? node.children.map((child) => serializePageEditorNodeToXml(child)).join('')
+    : '';
+  const id = typeof node.id === 'string' ? node.id : undefined;
+
+  switch (node.type) {
+    case 'root': {
+      return `<root>${childXml}</root>`;
+    }
+    case 'paragraph': {
+      return `<p${buildXmlAttributes({ id })}>${childXml}</p>`;
+    }
+    case 'heading': {
+      const tag = typeof node.tag === 'string' ? node.tag : 'h1';
+
+      return `<${tag}${buildXmlAttributes({ id })}>${childXml}</${tag}>`;
+    }
+    case 'list': {
+      const tag =
+        typeof node.tag === 'string' ? node.tag : node.listType === 'number' ? 'ol' : 'ul';
+      const attributes =
+        tag === 'ol' && typeof node.start === 'number' && node.start !== 1
+          ? { id, start: node.start }
+          : { id };
+
+      return `<${tag}${buildXmlAttributes(attributes)}>${childXml}</${tag}>`;
+    }
+    case 'listitem': {
+      return `<li${buildXmlAttributes({ id })}>${childXml}</li>`;
+    }
+    case 'quote': {
+      return `<blockquote${buildXmlAttributes({ id })}>${childXml}</blockquote>`;
+    }
+    case 'link': {
+      return `<a${buildXmlAttributes({ id, href: typeof node.url === 'string' ? node.url : undefined })}>${childXml}</a>`;
+    }
+    case 'horizontalrule': {
+      return `<hr${buildXmlAttributes({ id })} />`;
+    }
+    case 'code':
+    case 'codeblock': {
+      const codeXml = childXml || escapeXmlText(String(node.text ?? ''));
+
+      return node.type === 'codeblock'
+        ? `<pre${buildXmlAttributes({ id })}><code>${codeXml}</code></pre>`
+        : `<code${buildXmlAttributes({ id })}>${codeXml}</code>`;
+    }
+    case 'table': {
+      return `<table${buildXmlAttributes({ id })}>${childXml}</table>`;
+    }
+    case 'tablerow': {
+      return `<tr${buildXmlAttributes({ id })}>${childXml}</tr>`;
+    }
+    case 'tablecell': {
+      const tag = node.headerState ? 'th' : 'td';
+
+      return `<${tag}${buildXmlAttributes({ id })}>${childXml}</${tag}>`;
+    }
+    case 'image': {
+      return `<img${buildXmlAttributes({
+        alt: typeof node.altText === 'string' ? node.altText : undefined,
+        id,
+        src:
+          typeof node.src === 'string'
+            ? node.src
+            : typeof node.url === 'string'
+              ? node.url
+              : undefined,
+      })} />`;
+    }
+    default: {
+      if (typeof node.tag === 'string' && /^[a-z][\w-]*$/i.test(node.tag)) {
+        return `<${node.tag}${buildXmlAttributes({ id })}>${childXml}</${node.tag}>`;
+      }
+
+      return childXml;
+    }
+  }
+};
+
+const serializePageEditorDataToXml = (editorData: Record<string, any> | null | undefined) => {
+  if (!editorData?.root) return undefined;
+
+  const xml = serializePageEditorNodeToXml(editorData.root);
+
+  return xml || undefined;
+};
+
+const createPageContentContextFromDocument = (document: {
+  content: string | null;
+  editorData?: Record<string, any> | null;
+  filename?: string | null;
+  title?: string | null;
+  totalCharCount?: number | null;
+  totalLineCount?: number | null;
+}): PageContentContext => {
+  const title = document.title || document.filename || 'Untitled';
+  const markdown = document.content ?? undefined;
+  const xml = serializePageEditorDataToXml(document.editorData);
+
+  return {
+    ...(markdown ? { markdown } : undefined),
+    metadata: {
+      charCount: document.totalCharCount ?? markdown?.length ?? 0,
+      lineCount: document.totalLineCount ?? markdown?.split('\n').length ?? 0,
+      title,
+    },
+    ...(xml ? { xml } : undefined),
+  };
+};
+
+const resolvePageContentContext = async ({
+  documentId,
+  documentService,
+}: {
+  documentId?: string;
+  documentService: DocumentService;
+}): Promise<PageContentContext | undefined> => {
+  if (!documentId) return undefined;
+
+  const document = await documentService.getDocumentById(documentId);
+
+  if (!document) {
+    throw new ChatTransportStageStoreError(404, 'Compact chat transport document not found');
+  }
+
+  return createPageContentContextFromDocument(document);
+};
+
 const parseMentionedAgentsFromEditorData = (
   editorData: Record<string, any> | null | undefined,
 ): RuntimeMentionedAgent[] => {
@@ -299,6 +455,7 @@ const resolveCompactTransportRequest = async (
   const agentSkillModel = new AgentSkillModel(serverDB, userId);
   const marketService = new MarketService({ userInfo: { userId } });
   const klavisService = new KlavisService({ db: serverDB, userId });
+  const documentService = new DocumentService(serverDB, userId);
 
   const [
     agentConfig,
@@ -362,6 +519,7 @@ const resolveCompactTransportRequest = async (
     );
   }
 
+  const isPageScope = !!compact.documentId;
   const generalSettings = userSettings?.general as { timezone?: string } | undefined;
   const userTimezone = generalSettings?.timezone;
   const agentPlugins = agentConfig.plugins ?? [];
@@ -377,12 +535,40 @@ const resolveCompactTransportRequest = async (
   );
   const shouldInjectMentionDelegation =
     mentionedAgents.length > 0 && !agentPlugins.includes(AgentManagementIdentifier);
-  const effectiveAgentPlugins = shouldInjectMentionDelegation
+
+  let effectiveAgentPlugins = shouldInjectMentionDelegation
     ? [...new Set([...agentPlugins, AgentManagementIdentifier])]
     : agentPlugins;
+
+  if (isPageScope && !effectiveAgentPlugins.includes(PageAgentIdentifier)) {
+    effectiveAgentPlugins = [PageAgentIdentifier, ...effectiveAgentPlugins];
+  }
+
   const effectiveToolIds = [
     ...new Set([...effectiveAgentPlugins, ...selectedTools.map((tool) => tool.identifier)]),
   ];
+
+  const pageAgentRuntimeConfig = isPageScope
+    ? getAgentRuntimeConfig(BUILTIN_AGENT_SLUGS.pageAgent, {})
+    : undefined;
+  const effectiveSystemRole = (() => {
+    if (!isPageScope) return agentConfig.systemRole ?? undefined;
+
+    const pageAgentSystemRole = pageAgentRuntimeConfig?.systemRole;
+
+    if (!pageAgentSystemRole) return agentConfig.systemRole ?? undefined;
+
+    if ((agentConfig as any).slug === BUILTIN_AGENT_SLUGS.pageAgent) {
+      return agentConfig.systemRole ?? pageAgentSystemRole;
+    }
+
+    return agentConfig.systemRole
+      ? `${agentConfig.systemRole}\n\n${pageAgentSystemRole}`
+      : pageAgentSystemRole;
+  })();
+  const effectiveChatConfig = isPageScope
+    ? { ...agentConfig.chatConfig, enableHistoryCount: false }
+    : (agentConfig.chatConfig ?? undefined);
   const hasEnabledKnowledgeBases =
     agentConfig.knowledgeBases?.some((knowledgeBase) => knowledgeBase.enabled === true) ?? false;
   const { compact: _compact, transport: _transport, ...payload } = request;
@@ -394,6 +580,10 @@ const resolveCompactTransportRequest = async (
     ...(shouldInjectMentionDelegation ? [createCallAgentManifest() as LobeToolManifest] : []),
   ];
   const agentManagementContext = mentionedAgents.length > 0 ? { mentionedAgents } : undefined;
+  const pageContentContext = await resolvePageContentContext({
+    documentId: compact.documentId,
+    documentService,
+  });
 
   const isModelSupportToolUse = (model: string, provider: string) => {
     const info = LOBE_DEFAULT_MODEL_LIST.find(
@@ -411,7 +601,7 @@ const resolveCompactTransportRequest = async (
     {
       additionalManifests,
       agentConfig: {
-        chatConfig: agentConfig.chatConfig ?? undefined,
+        chatConfig: effectiveChatConfig,
         plugins: effectiveToolIds,
       },
       globalMemoryEnabled: false,
@@ -445,15 +635,15 @@ const resolveCompactTransportRequest = async (
     enableChecker: (skill) => shouldEnableBuiltinSkill(skill.identifier),
     skills: [...builtinSkillMetas, ...dbSkillMetas],
   });
-  const skillSet = skillEngine.generate(agentPlugins);
-  const selectedSkillIds = new Set(agentPlugins);
+  const skillSet = skillEngine.generate(effectiveAgentPlugins);
+  const selectedSkillIds = new Set(effectiveAgentPlugins);
   const enabledSkills = skillSet.skills.filter((skill) => selectedSkillIds.has(skill.identifier));
 
   const rebuiltMessages = await serverMessagesEngine({
     agentDocuments: mapAgentDocuments(agentDocuments),
-    enableHistoryCount: agentConfig.chatConfig?.enableHistoryCount ?? undefined,
-    historyCount: (agentConfig.chatConfig?.historyCount ?? 20) + 1,
-    inputTemplate: agentConfig.chatConfig?.inputTemplate ?? undefined,
+    enableHistoryCount: effectiveChatConfig?.enableHistoryCount ?? undefined,
+    historyCount: (effectiveChatConfig?.historyCount ?? 20) + 1,
+    inputTemplate: effectiveChatConfig?.inputTemplate ?? undefined,
     agentManagementContext,
     knowledge: {
       fileContents: agentConfig.files
@@ -473,11 +663,12 @@ const resolveCompactTransportRequest = async (
     },
     messages: runtimeMessages,
     model,
+    pageContentContext,
     provider,
     selectedSkills: selectedSkills.length > 0 ? selectedSkills : undefined,
     selectedTools: selectedTools.length > 0 ? selectedTools : undefined,
     skillsConfig: enabledSkills.length > 0 ? { enabledSkills } : undefined,
-    systemRole: agentConfig.systemRole ?? undefined,
+    systemRole: effectiveSystemRole,
     toolsConfig: {
       manifests: toolsResult.enabledManifests,
       tools: toolsResult.enabledToolIds,
