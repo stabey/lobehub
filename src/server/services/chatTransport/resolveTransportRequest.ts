@@ -9,13 +9,11 @@ import {
   type CredSummary,
   injectCredsContext,
 } from '@lobechat/builtin-tool-creds';
+import { GTDIdentifier } from '@lobechat/builtin-tool-gtd';
 import { PageAgentIdentifier } from '@lobechat/builtin-tool-page-agent';
 import { builtinTools, manualModeExcludeToolIds } from '@lobechat/builtin-tools';
-import {
-  type LobeToolManifest,
-  resolveTopicReferences,
-  SkillEngine,
-} from '@lobechat/context-engine';
+import type { GTDConfig, LobeToolManifest } from '@lobechat/context-engine';
+import { resolveTopicReferences, SkillEngine } from '@lobechat/context-engine';
 import type { PageContentContext } from '@lobechat/prompts';
 import { resourcesTreePrompt } from '@lobechat/prompts';
 import type {
@@ -33,6 +31,7 @@ import { AgentSkillModel } from '@/database/models/agentSkill';
 import { MessageModel } from '@/database/models/message';
 import { PluginModel } from '@/database/models/plugin';
 import { TopicModel } from '@/database/models/topic';
+import { TopicDocumentModel } from '@/database/models/topicDocument';
 import { UserModel } from '@/database/models/user';
 import type { LobeChatDatabase } from '@/database/type';
 import { shouldEnableBuiltinSkill } from '@/helpers/skillFilters';
@@ -437,6 +436,44 @@ const resolvePageContentContext = async ({
   return createPageContentContextFromDocument(document);
 };
 
+const resolveGTDContext = async ({
+  enabledToolIds,
+  topicDocumentModel,
+  topicId,
+}: {
+  enabledToolIds: string[];
+  topicDocumentModel: TopicDocumentModel;
+  topicId?: string;
+}): Promise<GTDConfig | undefined> => {
+  if (!topicId || !enabledToolIds.includes(GTDIdentifier)) return undefined;
+
+  try {
+    const planDocs = await topicDocumentModel.findByTopicId(topicId, { type: 'agent/plan' });
+    const planDoc = planDocs[0];
+
+    if (!planDoc) return undefined;
+
+    const metadata = planDoc.metadata as { todos?: GTDConfig['todos'] } | null | undefined;
+
+    return {
+      enabled: true,
+      plan: {
+        completed: false,
+        context: planDoc.content ?? undefined,
+        createdAt: planDoc.createdAt.toISOString(),
+        description: planDoc.description || '',
+        goal: planDoc.title || '',
+        id: planDoc.id,
+        updatedAt: planDoc.updatedAt.toISOString(),
+      },
+      todos: metadata?.todos,
+    };
+  } catch (error) {
+    console.error('[resolveTransportRequest] Failed to resolve GTD context:', error);
+    return undefined;
+  }
+};
+
 const parseMentionedAgentsFromEditorData = (
   editorData: Record<string, any> | null | undefined,
 ): RuntimeMentionedAgent[] => {
@@ -488,6 +525,7 @@ const resolveCompactTransportRequest = async (
   const marketService = new MarketService({ userInfo: { userId } });
   const klavisService = new KlavisService({ db: serverDB, userId });
   const documentService = new DocumentService(serverDB, userId);
+  const topicDocumentModel = new TopicDocumentModel(serverDB, userId);
   const topicModel = new TopicModel(serverDB, userId);
   const messageModel = new MessageModel(serverDB, userId);
 
@@ -647,6 +685,11 @@ const resolveCompactTransportRequest = async (
     documentId: compact.documentId,
     documentService,
   });
+  const gtd = await resolveGTDContext({
+    enabledToolIds: effectiveToolIds,
+    topicDocumentModel,
+    topicId: compact.topicId,
+  });
 
   const isModelSupportToolUse = (model: string, provider: string) => {
     const info = LOBE_DEFAULT_MODEL_LIST.find(
@@ -724,6 +767,7 @@ const resolveCompactTransportRequest = async (
           name: knowledgeBase.name,
         })),
     },
+    gtd,
     messages: runtimeMessages,
     model,
     pageContentContext,

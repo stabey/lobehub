@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { AgentManagementIdentifier } from '@lobechat/builtin-tool-agent-management';
+import { GTDIdentifier } from '@lobechat/builtin-tool-gtd';
 import type { TopicItem } from '@lobechat/database/schemas';
 import type {
   ChatStreamPayload,
@@ -30,10 +31,12 @@ const {
   mockGetDocumentById,
   mockQueryMessages,
   mockFindTopicById,
+  mockFindTopicDocuments,
 } = vi.hoisted(() => ({
   mockCreateServerAgentToolsEngine: vi.fn(),
   mockFindAllSkills: vi.fn(),
   mockFindSkillByIdentifier: vi.fn(),
+  mockFindTopicDocuments: vi.fn(),
   mockGetDocumentById: vi.fn(),
   mockQueryMessages: vi.fn(),
   mockFindTopicById: vi.fn(),
@@ -108,6 +111,12 @@ vi.mock('@/database/models/message', () => ({
 vi.mock('@/database/models/topic', () => ({
   TopicModel: vi.fn().mockImplementation(() => ({
     findById: mockFindTopicById,
+  })),
+}));
+
+vi.mock('@/database/models/topicDocument', () => ({
+  TopicDocumentModel: vi.fn().mockImplementation(() => ({
+    findByTopicId: mockFindTopicDocuments,
   })),
 }));
 
@@ -410,6 +419,7 @@ describe('resolveTransportRequest', () => {
     mockFindSkillByIdentifier.mockResolvedValue(undefined);
     mockGetDocumentById.mockResolvedValue(undefined);
     mockFindTopicById.mockResolvedValue(null);
+    mockFindTopicDocuments.mockResolvedValue([]);
     mockQueryMessages.mockResolvedValue([] as UIChatMessage[]);
 
     mockGetLobehubSkillManifests.mockResolvedValue([lobehubSkillManifest]);
@@ -541,6 +551,105 @@ describe('resolveTransportRequest', () => {
       stream: true,
       temperature: 0.6,
     });
+  });
+
+  it('should reconstruct GTD context from persisted plan documents in compact requests', async () => {
+    const todos = {
+      items: [{ status: 'todo', text: 'Implement compact parity' }],
+      updatedAt: '2026-04-22T00:00:00.000Z',
+    };
+
+    mockGetAgentConfigById.mockResolvedValue({
+      chatConfig: {
+        enableHistoryCount: true,
+        historyCount: 2,
+        inputTemplate: 'Summarize {{input}}',
+        skillActivateMode: 'manual',
+      },
+      files: [
+        {
+          content: 'File content',
+          enabled: true,
+          id: 'file-1',
+          name: 'guide.md',
+        },
+      ],
+      knowledgeBases: [
+        {
+          description: 'Knowledge base description',
+          enabled: true,
+          id: 'kb-1',
+          name: 'Knowledge Base',
+        },
+      ],
+      model: 'gpt-4',
+      plugins: ['plugin-a', GTDIdentifier],
+      provider: 'openai',
+      systemRole: 'You are a helpful assistant.',
+    });
+    mockFindTopicDocuments.mockResolvedValue([
+      {
+        content: 'Current GTD context',
+        createdAt: new Date('2026-04-20T00:00:00.000Z'),
+        id: 'plan-1',
+        metadata: { todos },
+        title: 'Ship transport migration',
+        updatedAt: new Date('2026-04-22T00:00:00.000Z'),
+      },
+    ] as any);
+    mockGenerateToolsDetailed.mockReturnValue({
+      enabledManifests: [toolManifest],
+      enabledToolIds: ['plugin-a', GTDIdentifier],
+    } as any);
+
+    await resolveTransportRequest(createCompactRequest(), { serverDB, userId: 'user-1' });
+
+    expect(mockFindTopicDocuments).toHaveBeenCalledWith('topic-1', { type: 'agent/plan' });
+    expect(mockServerMessagesEngine).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gtd: {
+          enabled: true,
+          plan: expect.objectContaining({
+            completed: false,
+            context: 'Current GTD context',
+            goal: 'Ship transport migration',
+            id: 'plan-1',
+          }),
+          todos,
+        },
+      }),
+    );
+  });
+
+  it('should omit GTD context when persisted plan lookup fails in compact requests', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    mockGetAgentConfigById.mockResolvedValue({
+      chatConfig: {
+        enableHistoryCount: true,
+        historyCount: 2,
+        inputTemplate: 'Summarize {{input}}',
+        skillActivateMode: 'manual',
+      },
+      files: [],
+      knowledgeBases: [],
+      model: 'gpt-4',
+      plugins: [GTDIdentifier],
+      provider: 'openai',
+      systemRole: 'You are a helpful assistant.',
+    });
+    mockFindTopicDocuments.mockRejectedValue(new Error('lookup failed'));
+    mockGenerateToolsDetailed.mockReturnValue({
+      enabledManifests: [],
+      enabledToolIds: [GTDIdentifier],
+    });
+
+    await resolveTransportRequest(createCompactRequest(), { serverDB, userId: 'user-1' });
+
+    const lastCall = mockServerMessagesEngine.mock.calls.at(-1)?.[0];
+
+    expect(lastCall?.gtd).toBeUndefined();
+    expect(errorSpy).toHaveBeenCalled();
   });
 
   it('should inject mention delegation context for compact requests without full agent management', async () => {
@@ -786,7 +895,7 @@ describe('resolveTransportRequest', () => {
   it('should inject persisted page editor context when compact request includes documentId', async () => {
     mockGetDocumentById.mockResolvedValue({
       content: '# Page Title\n\nDocument body',
-      editorData: { root: { children: [] } },
+      editorData: { root: { children: [], type: 'root' } },
       filename: 'page.md',
       title: 'Page Title',
       totalCharCount: 27,
@@ -814,6 +923,7 @@ describe('resolveTransportRequest', () => {
             lineCount: 3,
             title: 'Page Title',
           }),
+          xml: '<root></root>',
         }),
         systemRole: expect.stringContaining('You are a helpful assistant.'),
       }),

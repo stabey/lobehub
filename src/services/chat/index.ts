@@ -3,7 +3,6 @@ import { AgentBuilderIdentifier } from '@lobechat/builtin-tool-agent-builder';
 import { AgentManagementIdentifier } from '@lobechat/builtin-tool-agent-management';
 import { CredsIdentifier } from '@lobechat/builtin-tool-creds';
 import { GroupAgentBuilderIdentifier } from '@lobechat/builtin-tool-group-agent-builder';
-import { GTDIdentifier } from '@lobechat/builtin-tool-gtd';
 import { PageAgentIdentifier } from '@lobechat/builtin-tool-page-agent';
 import { WebOnboardingIdentifier } from '@lobechat/builtin-tool-web-onboarding';
 import { KLAVIS_SERVER_TYPES, LOBEHUB_SKILL_PROVIDERS } from '@lobechat/const';
@@ -32,7 +31,7 @@ import {
 } from '@/store/agent/selectors';
 import { aiProviderSelectors, getAiInfraStoreState } from '@/store/aiInfra';
 import { getChatStoreState } from '@/store/chat';
-import { getDocumentStoreState } from '@/store/document';
+import { editorSelectors, getDocumentStoreState } from '@/store/document';
 import { serverConfigSelectors } from '@/store/serverConfig/selectors';
 import { getToolStoreState } from '@/store/tool';
 import {
@@ -122,7 +121,6 @@ const UNSUPPORTED_COMPACT_TRANSPORT_TOOL_IDS = new Set([
   AgentBuilderIdentifier,
   AgentManagementIdentifier,
   CredsIdentifier,
-  GTDIdentifier,
   GroupAgentBuilderIdentifier,
   LobeActivatorIdentifier,
   PageAgentIdentifier,
@@ -335,9 +333,11 @@ class ChatService {
     const hasCompactCompatibleMentionContext = this.isCompactCompatibleMentionContext(
       options?.initialContext,
     );
-    const pageEditorDocumentId = options?.initialContext?.pageEditor
+    const hasPageEditorContext = !!options?.initialContext?.pageEditor;
+    const pageEditorDocumentId = hasPageEditorContext
       ? pageAgentRuntime.getCurrentDocId()
       : undefined;
+    const hasStepPageEditor = !!options?.stepContext?.stepPageEditor;
     const hasUnsupportedCompactTools = enabledToolIds.some((id) => {
       if (
         id === AgentManagementIdentifier &&
@@ -354,15 +354,15 @@ class ChatService {
       return UNSUPPORTED_COMPACT_TRANSPORT_TOOL_IDS.has(id);
     });
     const hasBlockingInitialContextData = !!(
-      (options?.initialContext?.pageEditor && !pageEditorDocumentId) ||
+      (hasPageEditorContext && !pageEditorDocumentId) ||
       ((options?.initialContext?.injectedManifests?.length ||
         options?.initialContext?.mentionedAgents?.length) &&
         !hasCompactCompatibleMentionContext)
     );
-    const hasStepContextData = !!options?.stepContext?.stepPageEditor;
+    const hasBlockingStepContextData = hasStepPageEditor && !pageEditorDocumentId;
     const isLatestMessageUser = lastMessage?.role === 'user';
     const userMessageId = isLatestMessageUser ? lastMessage.id : undefined;
-    const compactSafe =
+    let compactSafe =
       chatConfig.skillActivateMode === 'manual' &&
       isLatestMessageUser &&
       (!options?.userMessageId || options.userMessageId === userMessageId) &&
@@ -371,10 +371,33 @@ class ChatService {
       !hasUnsupportedCompactTools &&
       !options?.historySummary &&
       !hasBlockingInitialContextData &&
-      !hasStepContextData;
+      !hasBlockingStepContextData;
 
     if (compactSafe && pageEditorDocumentId) {
-      await getDocumentStoreState().performSave(pageEditorDocumentId);
+      try {
+        await getDocumentStoreState().performSave(pageEditorDocumentId);
+      } catch (error) {
+        console.error(
+          '[ChatService] Failed to save page editor state before compact transport:',
+          error,
+        );
+        compactSafe = false;
+      }
+
+      if (compactSafe) {
+        const documentStore = getDocumentStoreState();
+        const hasPersistedDocument = !!documentStore.documents?.[pageEditorDocumentId];
+        const pageDocumentIsDirty = hasPersistedDocument
+          ? editorSelectors.isDirty(pageEditorDocumentId)(documentStore)
+          : true;
+        const pageDocumentSaveStatus = hasPersistedDocument
+          ? editorSelectors.saveStatus(pageEditorDocumentId)(documentStore)
+          : 'idle';
+
+        if (pageDocumentIsDirty || pageDocumentSaveStatus !== 'saved') {
+          compactSafe = false;
+        }
+      }
     }
 
     return this.getChatCompletion(

@@ -308,6 +308,48 @@ describe('serverMessagesEngine', () => {
 
       expect(result).toBeDefined();
     });
+
+    it('should inject GTD context when provided', async () => {
+      const messages = createBasicMessages();
+
+      const result = await serverMessagesEngine({
+        gtd: {
+          enabled: true,
+          plan: {
+            completed: false,
+            context: 'Finish the compact migration',
+            createdAt: '2026-04-20T00:00:00.000Z',
+            description: 'Ship the remaining compact parity work',
+            goal: 'Ship transport migration',
+            id: 'plan-1',
+            updatedAt: '2026-04-22T00:00:00.000Z',
+          },
+          todos: {
+            items: [{ status: 'todo', text: 'Implement GTD compact parity' }],
+            updatedAt: '2026-04-22T00:00:00.000Z',
+          },
+        },
+        messages,
+        model: 'gpt-4',
+        provider: 'openai',
+      });
+
+      const injectedPlanMessage = result.find(
+        (msg) =>
+          msg.role === 'user' &&
+          typeof msg.content === 'string' &&
+          msg.content.includes('<gtd_plan>'),
+      );
+      const injectedTodoMessage = result.find(
+        (msg) =>
+          msg.role === 'user' &&
+          typeof msg.content === 'string' &&
+          msg.content.includes('<gtd_todos>'),
+      );
+
+      expect(injectedPlanMessage).toBeDefined();
+      expect(injectedTodoMessage).toBeDefined();
+    });
   });
 
   describe('input template', () => {

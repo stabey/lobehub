@@ -7,6 +7,7 @@ import type {
   DiscordContext,
   EvalContext,
   FileContent,
+  GTDConfig,
   KnowledgeBaseInfo,
   LobeToolManifest,
   OnboardingContext,
@@ -119,6 +120,9 @@ export interface ServerMessagesEngineParams {
 
   /** Page content context (optional, for document editing) */
   pageContentContext?: PageContentContext;
+
+  /** GTD context (optional, for task plan/todo injection) */
+  gtd?: GTDConfig;
 
   /** Provider ID */
   provider: string;

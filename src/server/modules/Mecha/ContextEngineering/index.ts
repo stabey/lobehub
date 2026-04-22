@@ -74,6 +74,7 @@ export const serverMessagesEngine = async ({
   agentManagementContext,
   onboardingContext,
   pageContentContext,
+  gtd,
   topicReferences,
   additionalVariables,
   userTimezone,
@@ -153,6 +154,7 @@ export const serverMessagesEngine = async ({
 
     // Topic references
     ...(topicReferences && topicReferences.length > 0 && { topicReferences }),
+    ...(gtd && { gtd }),
 
     // Extended contexts
     ...(agentBuilderContext && { agentBuilderContext }),
