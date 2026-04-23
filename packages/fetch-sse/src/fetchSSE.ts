@@ -98,6 +98,10 @@ export interface FetchSSERequestContext {
   fetchOnClient?: boolean;
   model?: string;
   provider?: string;
+  stagedAttempted?: boolean;
+  stagedFallback?: boolean;
+  stagedFallbackReason?: string;
+  transportMode?: 'direct' | 'staged' | 'compact';
 }
 
 export interface FetchSSEOptions {

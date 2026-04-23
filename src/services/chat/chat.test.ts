@@ -2172,7 +2172,8 @@ describe('ChatService', () => {
 
       expect(fetchSpy).not.toHaveBeenCalled();
 
-      const requestBody = JSON.parse(mockFetchSSE.mock.calls[0][1].body);
+      const requestOptions = mockFetchSSE.mock.calls[0][1];
+      const requestBody = JSON.parse(requestOptions.body);
 
       expect(requestBody).toEqual(
         expect.objectContaining({
@@ -2193,6 +2194,14 @@ describe('ChatService', () => {
         }),
       );
       expect(requestBody).not.toHaveProperty('messages');
+      expect(requestOptions.requestContext).toEqual(
+        expect.objectContaining({
+          fetchOnClient: false,
+          stagedAttempted: false,
+          stagedFallback: false,
+          transportMode: 'compact',
+        }),
+      );
     });
 
     it('should use compact transport for mention-only delegation context', async () => {
@@ -2277,6 +2286,12 @@ describe('ChatService', () => {
         expect.any(String),
         expect.objectContaining({
           body: JSON.stringify({ stageId: 'stage-123', transport: 'staged' }),
+          requestContext: expect.objectContaining({
+            fetchOnClient: false,
+            stagedAttempted: true,
+            stagedFallback: false,
+            transportMode: 'staged',
+          }),
         }),
       );
     });
@@ -2288,10 +2303,7 @@ describe('ChatService', () => {
         getState: () => ({ serverConfig: { chatTransport: { staged: true } } }),
       } as any;
 
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue(new Response('stage failed', { status: 500 })),
-      );
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue({ message: 'stage failed', type: 503 }));
 
       const params: Partial<ChatStreamPayload> = {
         model: 'test-model',
@@ -2312,8 +2324,39 @@ describe('ChatService', () => {
             messages: [],
             apiMode: 'responses',
           }),
+          requestContext: expect.objectContaining({
+            fetchOnClient: false,
+            stagedAttempted: true,
+            stagedFallback: true,
+            stagedFallbackReason: '503',
+            transportMode: 'direct',
+          }),
         }),
       );
+    });
+
+    it('should rethrow aborts during stage creation without falling back', async () => {
+      vi.spyOn(aiProviderSelectors, 'isProviderFetchOnClient').mockReturnValue(() => false);
+
+      window.global_serverConfigStore = {
+        getState: () => ({ serverConfig: { chatTransport: { staged: true } } }),
+      } as any;
+
+      const abortError = new Error('aborted');
+      abortError.name = 'AbortError';
+
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(abortError));
+
+      const params: Partial<ChatStreamPayload> = {
+        model: 'test-model',
+        messages: [],
+        provider: 'openai',
+      };
+
+      await expect(chatService.getChatCompletion(params, {})).rejects.toThrow(abortError);
+
+      expect(global.fetch).toHaveBeenCalledWith(API_ENDPOINTS.chatStage, expect.anything());
+      expect(mockFetchSSE).not.toHaveBeenCalled();
     });
 
     it('should skip staged transport for fetch-on-client requests', async () => {
@@ -2344,6 +2387,12 @@ describe('ChatService', () => {
             ...DEFAULT_AGENT_CONFIG.params,
             messages: [],
             apiMode: 'responses',
+          }),
+          requestContext: expect.objectContaining({
+            fetchOnClient: true,
+            stagedAttempted: false,
+            stagedFallback: false,
+            transportMode: 'direct',
           }),
         }),
       );

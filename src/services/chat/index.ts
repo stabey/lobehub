@@ -552,6 +552,10 @@ class ChatService {
 
     let transportRequest: ChatTransportRequest = payload as ChatStreamPayload;
     const transportConfig = this.getTransportConfig();
+    let transportMode: 'direct' | 'staged' | 'compact' = 'direct';
+    let stagedAttempted = false;
+    let stagedFallback = false;
+    let stagedFallbackReason: string | undefined;
 
     if (!enableFetchOnClient) {
       if (
@@ -565,6 +569,7 @@ class ChatService {
           userMessageId,
         })
       ) {
+        transportMode = 'compact';
         transportRequest = this.createCompactTransportRequest(payload as ChatStreamPayload, {
           agentId: agentId!,
           assistantMessageId: assistantMessageId!,
@@ -574,16 +579,28 @@ class ChatService {
           userMessageId: userMessageId!,
         });
       } else if (transportConfig.stagedEnabled) {
+        stagedAttempted = true;
+
         try {
           transportRequest = await this.createStagedTransportRequest(
             payload as ChatStreamPayload,
             provider,
             signal,
           );
+          transportMode = 'staged';
         } catch (error) {
           if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) {
             throw error;
           }
+
+          transportMode = 'direct';
+          stagedFallback = true;
+          stagedFallbackReason =
+            error instanceof Error
+              ? error.name
+              : error && typeof error === 'object' && 'type' in error
+                ? String(error.type)
+                : 'unknown';
         }
       }
     }
@@ -627,6 +644,10 @@ class ChatService {
         fetchOnClient: enableFetchOnClient,
         model,
         provider,
+        stagedAttempted,
+        stagedFallback,
+        ...(stagedFallbackReason && { stagedFallbackReason }),
+        transportMode,
       },
       responseAnimation: mergedResponseAnimation,
       signal,
