@@ -323,6 +323,7 @@
     "dexie": "^3.2.7",
     "diff": "^8.0.3",
     "discord-api-types": "^0.38.40",
+    "dompurify": "^3.3.0",
     "drizzle-orm": "^0.45.1",
     "drizzle-zod": "^0.5.1",
     "epub2": "^3.0.2",
