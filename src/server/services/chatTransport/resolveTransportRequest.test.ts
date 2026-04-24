@@ -1009,11 +1009,11 @@ describe('resolveTransportRequest', () => {
     expect(mockServerMessagesEngine).not.toHaveBeenCalled();
   });
 
-  it('should reject compact requests when the latest runtime message is not the referenced user message', async () => {
+  it('should truncate runtime messages to the referenced user message when newer messages exist', async () => {
     mockGetMessagesAndTopics.mockResolvedValue({
       messages: [
         {
-          content: 'Latest question',
+          content: 'Target question',
           createdAt: new Date(),
           id: 'user-1',
           role: 'user',
@@ -1028,24 +1028,31 @@ describe('resolveTransportRequest', () => {
           updatedAt: new Date(),
         },
         {
-          content: 'Other assistant message',
+          content: 'Follow-up question sent while assistant-1 was still streaming',
+          createdAt: new Date(),
+          id: 'user-2',
+          role: 'user',
+          updatedAt: new Date(),
+        },
+        {
+          content: 'Follow-up answer',
           createdAt: new Date(),
           id: 'assistant-2',
+          parentId: 'user-2',
           role: 'assistant',
           updatedAt: new Date(),
         },
       ],
     });
 
-    await expect(
-      resolveTransportRequest(createCompactRequest(), { serverDB, userId: 'user-1' }),
-    ).rejects.toEqual(
-      new ChatTransportStageStoreError(
-        400,
-        'Compact chat transport latest user message is invalid',
-      ),
-    );
+    await resolveTransportRequest(createCompactRequest(), { serverDB, userId: 'user-1' });
 
-    expect(mockServerMessagesEngine).not.toHaveBeenCalled();
+    expect(mockServerMessagesEngine).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({ id: 'user-1' }),
+        ],
+      }),
+    );
   });
 });

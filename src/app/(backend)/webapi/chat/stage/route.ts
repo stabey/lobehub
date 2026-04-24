@@ -15,7 +15,7 @@ const stagedChatPayloadSchema = z
   .object({
     messages: z.array(z.any()),
     model: z.string().min(1),
-    temperature: z.number(),
+    temperature: z.number().nullish(),
   })
   .passthrough();
 

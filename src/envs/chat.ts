@@ -10,14 +10,16 @@ export interface ChatTransportConfig {
 export const getChatEnv = () => {
   return createEnv({
     runtimeEnv: {
-      CHAT_COMPACT_TRANSPORT_ENABLED: process.env.CHAT_COMPACT_TRANSPORT_ENABLED,
-      CHAT_STAGED_TRANSPORT_ENABLED: process.env.CHAT_STAGED_TRANSPORT_ENABLED,
-      CHAT_STAGED_TRANSPORT_TTL_SECONDS: process.env.CHAT_STAGED_TRANSPORT_TTL_SECONDS,
+      CHAT_COMPACT_TRANSPORT_ENABLED: process.env.CHAT_COMPACT_TRANSPORT_ENABLED === '1',
+      CHAT_STAGED_TRANSPORT_ENABLED: process.env.CHAT_STAGED_TRANSPORT_ENABLED === '1',
+      CHAT_STAGED_TRANSPORT_TTL_SECONDS: parseInt(
+        process.env.CHAT_STAGED_TRANSPORT_TTL_SECONDS || '300',
+      ),
     },
     server: {
-      CHAT_COMPACT_TRANSPORT_ENABLED: z.coerce.boolean().default(false),
-      CHAT_STAGED_TRANSPORT_ENABLED: z.coerce.boolean().default(false),
-      CHAT_STAGED_TRANSPORT_TTL_SECONDS: z.coerce.number().int().positive().default(300),
+      CHAT_COMPACT_TRANSPORT_ENABLED: z.boolean(),
+      CHAT_STAGED_TRANSPORT_ENABLED: z.boolean(),
+      CHAT_STAGED_TRANSPORT_TTL_SECONDS: z.number().int().positive(),
     },
   });
 };

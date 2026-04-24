@@ -79,6 +79,35 @@ describe('chat stage route', () => {
     });
   });
 
+  it('accepts payloads with missing or null temperature', async () => {
+    mockCreateStage.mockResolvedValue({
+      expiresAt: '2026-04-20T00:00:00.000Z',
+      stageId: 'stage-456',
+    });
+
+    const requestWithoutTemperature = new Request(new URL('https://test.com'), {
+      method: 'POST',
+      body: JSON.stringify({ messages: [], model: 'test-model' }),
+    });
+    const responseWithoutTemperature = await POST(requestWithoutTemperature, {
+      params: Promise.resolve({}),
+    });
+    expect(responseWithoutTemperature.status).toBe(200);
+
+    mockCreateStage.mockResolvedValue({
+      expiresAt: '2026-04-20T00:00:00.000Z',
+      stageId: 'stage-789',
+    });
+    const requestWithNullTemperature = new Request(new URL('https://test.com'), {
+      method: 'POST',
+      body: JSON.stringify({ messages: [], model: 'test-model', temperature: null }),
+    });
+    const responseWithNullTemperature = await POST(requestWithNullTemperature, {
+      params: Promise.resolve({}),
+    });
+    expect(responseWithNullTemperature.status).toBe(200);
+  });
+
   it('returns bad request for invalid staged payload', async () => {
     request = new Request(new URL('https://test.com'), {
       method: 'POST',

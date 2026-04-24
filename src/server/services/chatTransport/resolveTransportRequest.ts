@@ -582,14 +582,21 @@ const resolveCompactTransportRequest = async (
     );
   }
 
-  const runtimeMessages = messages.filter((message) => message.id !== compact.assistantMessageId);
+  const messagesWithoutAssistant = messages.filter(
+    (message) => message.id !== compact.assistantMessageId,
+  );
+  const userMessageIndex = messagesWithoutAssistant.findIndex(
+    (message) => message.id === compact.userMessageId,
+  );
 
-  if (runtimeMessages.at(-1)?.id !== compact.userMessageId) {
+  if (userMessageIndex === -1) {
     throw new ChatTransportStageStoreError(
       400,
-      'Compact chat transport latest user message is invalid',
+      'Compact chat transport user message is not part of the topic history',
     );
   }
+
+  const runtimeMessages = messagesWithoutAssistant.slice(0, userMessageIndex + 1);
 
   const topicLookupCache = new Map<string, Awaited<ReturnType<TopicModel['findById']>> | null>();
   const lookupTopic = async (topicId: string) => {
