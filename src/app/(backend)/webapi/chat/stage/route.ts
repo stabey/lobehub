@@ -66,8 +66,13 @@ export const POST = checkAuth(async (req, { userId }) => {
       });
     }
 
+    const payload = {
+      ...result.data,
+      temperature: result.data.temperature ?? undefined,
+    } as ChatStreamPayload;
+
     const store = new ChatTransportStageStore(userId);
-    const stageResult = await store.createStage(result.data as ChatStreamPayload);
+    const stageResult = await store.createStage(payload);
 
     return Response.json(stageResult);
   } catch (error) {

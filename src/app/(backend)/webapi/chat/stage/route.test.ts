@@ -93,6 +93,11 @@ describe('chat stage route', () => {
       params: Promise.resolve({}),
     });
     expect(responseWithoutTemperature.status).toBe(200);
+    expect(mockCreateStage).toHaveBeenLastCalledWith({
+      messages: [],
+      model: 'test-model',
+      temperature: undefined,
+    });
 
     mockCreateStage.mockResolvedValue({
       expiresAt: '2026-04-20T00:00:00.000Z',
@@ -106,6 +111,11 @@ describe('chat stage route', () => {
       params: Promise.resolve({}),
     });
     expect(responseWithNullTemperature.status).toBe(200);
+    expect(mockCreateStage).toHaveBeenLastCalledWith({
+      messages: [],
+      model: 'test-model',
+      temperature: undefined,
+    });
   });
 
   it('returns bad request for invalid staged payload', async () => {
