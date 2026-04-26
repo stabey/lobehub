@@ -2328,7 +2328,7 @@ describe('ChatService', () => {
             fetchOnClient: false,
             stagedAttempted: true,
             stagedFallback: true,
-            stagedFallbackReason: '503',
+            stagedFallbackReason: 'http_503',
             transportMode: 'direct',
           }),
         }),

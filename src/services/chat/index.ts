@@ -127,6 +127,29 @@ const UNSUPPORTED_COMPACT_TRANSPORT_TOOL_IDS = new Set([
   WebOnboardingIdentifier,
 ]);
 
+/**
+ * Resolve a stable telemetry tag for staged-transport fallback errors.
+ *
+ * `getMessageError` returns a `ChatMessageError` whose `type` is either:
+ *  - a server-side `ChatErrorType` string (e.g. `'ServiceUnavailable'`), or
+ *  - a numeric HTTP status (e.g. `503`) when the response body wasn't JSON.
+ *
+ * To keep these readable in telemetry without conflating them with native
+ * `Error.name`s like `'AbortError'`, numeric statuses are prefixed with
+ * `http_`.
+ */
+const resolveStagedFallbackReason = (error: unknown): string => {
+  if (error instanceof Error) return error.name;
+
+  if (error && typeof error === 'object' && 'type' in error) {
+    const { type } = error as { type: unknown };
+    if (typeof type === 'number') return `http_${type}`;
+    if (typeof type === 'string') return type;
+  }
+
+  return 'unknown';
+};
+
 class ChatService {
   private resolveAgentDocumentsTargetId = (
     targetAgentId: string,
@@ -595,12 +618,7 @@ class ChatService {
 
           transportMode = 'direct';
           stagedFallback = true;
-          stagedFallbackReason =
-            error instanceof Error
-              ? error.name
-              : error && typeof error === 'object' && 'type' in error
-                ? String(error.type)
-                : 'unknown';
+          stagedFallbackReason = resolveStagedFallbackReason(error);
         }
       }
     }
