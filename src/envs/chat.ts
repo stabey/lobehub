@@ -14,6 +14,7 @@ export const getChatEnv = () => {
       CHAT_STAGED_TRANSPORT_ENABLED: process.env.CHAT_STAGED_TRANSPORT_ENABLED === '1',
       CHAT_STAGED_TRANSPORT_TTL_SECONDS: parseInt(
         process.env.CHAT_STAGED_TRANSPORT_TTL_SECONDS || '300',
+        10,
       ),
     },
     server: {
