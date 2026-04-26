@@ -19,6 +19,31 @@ const stagedChatPayloadSchema = z
   })
   .passthrough();
 
+/**
+ * Sampling fields that providers reject when they receive `null`.
+ * The client can serialize unset agent params as `null`; once that lands in
+ * Redis via JSON.stringify, downstream provider calls see `"key": null` and
+ * 400. Strip `null` here so the persisted payload simply omits the key.
+ */
+const NULLABLE_SAMPLING_FIELDS = [
+  'temperature',
+  'top_p',
+  'frequency_penalty',
+  'presence_penalty',
+  'max_tokens',
+  'n',
+] as const;
+
+const stripNullSamplingFields = <T extends Record<string, unknown>>(payload: T): T => {
+  const next: Record<string, unknown> = { ...payload };
+  for (const field of NULLABLE_SAMPLING_FIELDS) {
+    if (next[field] === null) {
+      delete next[field];
+    }
+  }
+  return next as T;
+};
+
 const mapStageStoreErrorType = (statusCode: number) => {
   switch (statusCode) {
     case 400: {
@@ -66,10 +91,7 @@ export const POST = checkAuth(async (req, { userId }) => {
       });
     }
 
-    const payload = {
-      ...result.data,
-      temperature: result.data.temperature ?? undefined,
-    } as ChatStreamPayload;
+    const payload = stripNullSamplingFields(result.data) as ChatStreamPayload;
 
     const store = new ChatTransportStageStore(userId);
     const stageResult = await store.createStage(payload);

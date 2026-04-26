@@ -93,11 +93,8 @@ describe('chat stage route', () => {
       params: Promise.resolve({}),
     });
     expect(responseWithoutTemperature.status).toBe(200);
-    expect(mockCreateStage).toHaveBeenLastCalledWith({
-      messages: [],
-      model: 'test-model',
-      temperature: undefined,
-    });
+    const argWithoutTemperature = mockCreateStage.mock.calls.at(-1)?.[0];
+    expect(argWithoutTemperature).not.toHaveProperty('temperature');
 
     mockCreateStage.mockResolvedValue({
       expiresAt: '2026-04-20T00:00:00.000Z',
@@ -111,11 +108,42 @@ describe('chat stage route', () => {
       params: Promise.resolve({}),
     });
     expect(responseWithNullTemperature.status).toBe(200);
-    expect(mockCreateStage).toHaveBeenLastCalledWith({
-      messages: [],
-      model: 'test-model',
-      temperature: undefined,
+    const argWithNullTemperature = mockCreateStage.mock.calls.at(-1)?.[0];
+    expect(argWithNullTemperature).not.toHaveProperty('temperature');
+  });
+
+  it('strips other null sampling fields before staging', async () => {
+    mockCreateStage.mockResolvedValue({
+      expiresAt: '2026-04-20T00:00:00.000Z',
+      stageId: 'stage-strip',
     });
+
+    const requestWithNullSamplingFields = new Request(new URL('https://test.com'), {
+      method: 'POST',
+      body: JSON.stringify({
+        frequency_penalty: null,
+        max_tokens: null,
+        messages: [],
+        model: 'test-model',
+        n: null,
+        presence_penalty: null,
+        temperature: 0.7,
+        top_p: null,
+      }),
+    });
+
+    const response = await POST(requestWithNullSamplingFields, {
+      params: Promise.resolve({}),
+    });
+
+    expect(response.status).toBe(200);
+    const arg = mockCreateStage.mock.calls.at(-1)?.[0];
+    expect(arg).toEqual({ messages: [], model: 'test-model', temperature: 0.7 });
+    expect(arg).not.toHaveProperty('top_p');
+    expect(arg).not.toHaveProperty('frequency_penalty');
+    expect(arg).not.toHaveProperty('presence_penalty');
+    expect(arg).not.toHaveProperty('max_tokens');
+    expect(arg).not.toHaveProperty('n');
   });
 
   it('returns bad request for invalid staged payload', async () => {
