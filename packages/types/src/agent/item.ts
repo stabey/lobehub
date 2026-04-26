@@ -63,6 +63,11 @@ export interface LobeAgentConfig {
   provider?: string;
 
   /**
+   * Agent slug (used to identify built-in agents like the page agent)
+   */
+  slug?: string | null;
+
+  /**
    * System role
    */
   systemRole: string;

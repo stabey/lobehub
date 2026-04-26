@@ -12,7 +12,11 @@ import {
 import { GTDIdentifier } from '@lobechat/builtin-tool-gtd';
 import { PageAgentIdentifier } from '@lobechat/builtin-tool-page-agent';
 import { builtinTools, manualModeExcludeToolIds } from '@lobechat/builtin-tools';
-import type { GTDConfig, LobeToolManifest } from '@lobechat/context-engine';
+import type {
+  AgentDocumentInjectionPosition,
+  GTDConfig,
+  LobeToolManifest,
+} from '@lobechat/context-engine';
 import { resolveTopicReferences, SkillEngine } from '@lobechat/context-engine';
 import type { PageContentContext } from '@lobechat/prompts';
 import { resourcesTreePrompt } from '@lobechat/prompts';
@@ -69,7 +73,7 @@ const mapAgentDocuments = (documents: AgentDocumentWithRules[]) => {
     description: document.description ?? undefined,
     filename: document.filename,
     id: document.id,
-    loadPosition: document.policyLoadPosition as any,
+    loadPosition: document.policyLoadPosition as AgentDocumentInjectionPosition,
     loadRules: document.loadRules,
     policyLoad: document.policyLoad,
     policyLoadFormat: document.policyLoadFormat,
@@ -666,7 +670,7 @@ const resolveCompactTransportRequest = async (
 
     if (!pageAgentSystemRole) return agentConfig.systemRole ?? undefined;
 
-    if ((agentConfig as any).slug === BUILTIN_AGENT_SLUGS.pageAgent) {
+    if (agentConfig.slug === BUILTIN_AGENT_SLUGS.pageAgent) {
       return agentConfig.systemRole ?? pageAgentSystemRole;
     }
 
