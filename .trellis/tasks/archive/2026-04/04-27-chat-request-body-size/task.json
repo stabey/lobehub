@@ -4,7 +4,7 @@
   "branch": "feat/slim-chat-requests",
   "children": [],
   "commit": null,
-  "completedAt": null,
+  "completedAt": "2026-04-27",
   "createdAt": "2026-04-27",
   "creator": "stabey",
   "description": "",
@@ -19,7 +19,7 @@
   "priority": "P2",
   "relatedFiles": [],
   "scope": null,
-  "status": "in_progress",
+  "status": "completed",
   "subtasks": [],
   "title": "brainstorm: reduce chat request body size",
   "worktree_path": null
