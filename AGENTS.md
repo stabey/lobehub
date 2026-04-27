@@ -122,3 +122,30 @@ cd packages/database && bunx vitest run --silent='passed-only' '[file]'
 - Add keys to a namespace file under `src/locales/default/` (e.g. `agent.ts`, `auth.ts`)
 - For dev preview: translate `locales/zh-CN/` and `locales/en-US/`
 - Don't run `pnpm i18n` - CI handles it
+
+<!-- TRELLIS:START -->
+
+# Trellis Instructions
+
+These instructions are for AI assistants working in this project.
+
+Use the `/trellis:start` command when starting a new session to:
+
+- Initialize your developer identity
+- Understand current project context
+- Read relevant guidelines
+
+Use `@/.trellis/` to learn:
+
+- Development workflow (`workflow.md`)
+- Project structure guidelines (`spec/`)
+- Developer workspace (`workspace/`)
+
+If you're using Codex, project-scoped helpers may also live in:
+
+- `.agents/skills/` for reusable Trellis skills
+- `.codex/agents/` for optional custom subagents
+
+Keep this managed block so 'trellis update' can refresh the instructions.
+
+<!-- TRELLIS:END -->
