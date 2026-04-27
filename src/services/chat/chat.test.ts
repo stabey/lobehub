@@ -69,17 +69,85 @@ vi.mock('i18next', () => ({
   t: vi.fn((key) => `translated_${key}`),
 }));
 
+vi.mock('@lobechat/model-runtime', () => ({
+  AgentRuntimeError: {
+    createError: vi.fn((errorType) => ({ errorType })),
+  },
+  responsesAPIModels: new Set(['gpt-5.4']),
+}));
+
+vi.mock('@lobechat/utils', () => {
+  const cleanObject = <T extends Record<string, unknown>>(value: T): Partial<T> =>
+    Object.fromEntries(
+      Object.entries(value).filter(([, item]) => item !== undefined),
+    ) as Partial<T>;
+  const dedupeBy = <T>(items: T[], getKey: (item: T) => string | undefined): T[] => {
+    const seen = new Set<string>();
+
+    return items.filter((item) => {
+      const key = getKey(item);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+  const nanoid = () => 'mock-id';
+
+  return {
+    cleanObject,
+    createBasicAuthCredentials: vi.fn((username: string, password: string) => ({
+      password,
+      username,
+    })),
+    createNanoId: vi.fn(() => nanoid),
+    dedupeBy,
+    deserializeParts: vi.fn((value) => value),
+    detectTruncatedJSON: vi.fn(() => false),
+    errorMessageFrom: vi.fn((error) => (error instanceof Error ? error.message : String(error))),
+    formatCost: vi.fn((value) => String(value)),
+    formatShortenNumber: vi.fn((value) => String(value)),
+    generateUniqueSeeds: vi.fn(() => []),
+    getCachedTextInputUnitRate: vi.fn(() => 0),
+    getMimeType: vi.fn(() => undefined),
+    getWriteCacheInputUnitRate: vi.fn(() => 0),
+    imageUrlToBase64: vi.fn(),
+    inferContentTypeFromImageUrl: vi.fn(() => undefined),
+    isCommandPressed: vi.fn(() => false),
+    isLocalOrPrivateUrl: vi.fn(() => false),
+    isOnServerSide: false,
+    merge: vi.fn((target, source) => ({ ...target, ...source })),
+    nanoid,
+    safeParseJSON: vi.fn((value, fallback) => {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return fallback;
+      }
+    }),
+    safeParsePartialJSON: vi.fn((value) => JSON.parse(value)),
+    sanitizeToolCallArguments: vi.fn((value) => value),
+    serializePartsForStorage: vi.fn((value) => value),
+    setCookie: vi.fn(),
+    uuid: vi.fn(() => 'mock-uuid'),
+    videoUrlToBase64: vi.fn(),
+  };
+});
+
 vi.stubGlobal(
   'fetch',
   vi.fn(() => Promise.resolve(new Response(JSON.stringify({ some: 'data' })))),
 );
 
 // Mock image processing utilities
-vi.mock('@lobechat/fetch-sse', async (importOriginal) => {
-  const module = await importOriginal();
+vi.mock('@lobechat/fetch-sse', () => ({
+  fetchSSE: vi.fn(),
+  getMessageError: vi.fn(),
+  standardizeAnimationStyle: vi.fn((animationStyle?: unknown) => {
+    if (animationStyle && typeof animationStyle === 'object') return animationStyle;
 
-  return { ...(module as any), getMessageError: vi.fn() };
-});
+    return { text: animationStyle };
+  }),
+}));
 vi.mock('@lobechat/utils/url', () => ({
   isDesktopLocalStaticServerUrl: vi.fn(),
 }));
@@ -88,6 +156,22 @@ vi.mock('@lobechat/utils/imageToBase64', () => ({
 }));
 vi.mock('@lobechat/utils/uriParser', () => ({
   parseDataUri: vi.fn(),
+}));
+vi.mock('@/utils/trace', () => ({
+  createTraceHeader: vi.fn(() => ({})),
+}));
+vi.mock('@/store/file', () => ({
+  useFileStore: {
+    getState: vi.fn(() => ({
+      uploadWithProgress: vi.fn(),
+    })),
+  },
+}));
+vi.mock('@/store/file/store', () => ({
+  getFileStoreState: vi.fn(() => ({
+    chatUploadFileList: [],
+    uploadBase64FileWithProgress: vi.fn(),
+  })),
 }));
 
 afterEach(() => {
@@ -1616,6 +1700,42 @@ describe('ChatService', () => {
       );
     });
 
+    it('should send compact chat references without model-ready messages when chatRef is provided', async () => {
+      const params: Partial<ChatStreamPayload> = {
+        model: 'test-model',
+        messages: [{ content: 'large compiled context', role: 'user' }],
+        tools: [{ function: { name: 'tool____run' }, type: 'function' }],
+        parentMessageId: 'm-user',
+      } as Partial<ChatStreamPayload> & { parentMessageId: string };
+
+      await chatService.getChatCompletion(params, {
+        chatRef: {
+          agentId: 'agent-1',
+          assistantMessageId: 'm-assistant',
+          parentMessageId: 'm-user',
+          topicId: 'topic-1',
+        },
+      });
+
+      const payload = JSON.parse(mockFetchSSE.mock.calls[0][1].body);
+
+      expect(payload).toEqual(
+        expect.objectContaining({
+          chatRef: {
+            agentId: 'agent-1',
+            assistantMessageId: 'm-assistant',
+            parentMessageId: 'm-user',
+            topicId: 'topic-1',
+          },
+          compact: true,
+          model: 'test-model',
+        }),
+      );
+      expect(payload).not.toHaveProperty('messages');
+      expect(payload).not.toHaveProperty('parentMessageId');
+      expect(payload).not.toHaveProperty('tools');
+    });
+
     it('should preserve Azure Responses-only logical model and pass deploymentName separately', async () => {
       useAiInfraStore.setState({
         enabledAiModels: [
@@ -1707,23 +1827,21 @@ describe('ChatService', () => {
 
     it('should handle successful chat completion response', async () => {
       // Mock getChatCompletion to simulate successful completion
-      const getChatCompletionSpy = vi
-        .spyOn(chatService, 'getChatCompletion')
-        .mockImplementation(async (params, options) => {
-          // Simulate successful response
-          if (options?.onFinish) {
-            options.onFinish('AI response', {
-              type: 'done',
-              observationId: null,
-              toolCalls: undefined,
-              traceId: null,
-            });
-          }
-          if (options?.onMessageHandle) {
-            options.onMessageHandle({ type: 'text', text: 'AI response' });
-          }
-          return new Response('');
-        });
+      vi.spyOn(chatService, 'getChatCompletion').mockImplementation(async (params, options) => {
+        // Simulate successful response
+        if (options?.onFinish) {
+          options.onFinish('AI response', {
+            type: 'done',
+            observationId: null,
+            toolCalls: undefined,
+            traceId: null,
+          });
+        }
+        if (options?.onMessageHandle) {
+          options.onMessageHandle({ type: 'text', text: 'AI response' });
+        }
+        return new Response('');
+      });
 
       const params = {
         messages: [{ content: 'Hello', role: 'user' as const }],
@@ -1762,15 +1880,13 @@ describe('ChatService', () => {
 
     it('should handle error in chat completion', async () => {
       // Mock getChatCompletion to simulate error
-      const getChatCompletionSpy = vi
-        .spyOn(chatService, 'getChatCompletion')
-        .mockImplementation(async (params, options) => {
-          // Simulate error response
-          if (options?.onErrorHandle) {
-            options.onErrorHandle({ message: 'translated_response.404', type: 404 });
-          }
-          return new Response('');
-        });
+      vi.spyOn(chatService, 'getChatCompletion').mockImplementation(async (params, options) => {
+        // Simulate error response
+        if (options?.onErrorHandle) {
+          options.onErrorHandle({ message: 'translated_response.404', type: 404 });
+        }
+        return new Response('');
+      });
 
       const params = {
         messages: [{ content: 'Hello', role: 'user' as const }],
@@ -1811,13 +1927,7 @@ describe('ChatService private methods', () => {
   describe('getChatCompletion', () => {
     it('should merge responseAnimation styles correctly', async () => {
       const { fetchSSE } = await import('@lobechat/fetch-sse');
-      vi.mock('@lobechat/fetch-sse', async (importOriginal) => {
-        const module = await importOriginal();
-        return {
-          ...(module as any),
-          fetchSSE: vi.fn(),
-        };
-      });
+      vi.mocked(fetchSSE).mockReset();
 
       // Mock provider config
       const { aiProviderSelectors } = await import('@/store/aiInfra');

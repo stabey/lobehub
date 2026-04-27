@@ -4,7 +4,8 @@ import { ChatErrorType } from '@lobechat/types';
 
 import { checkAuth } from '@/app/(backend)/middleware/auth';
 import { createTraceOptions, initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
-import { type ChatStreamPayload } from '@/types/openai/chat';
+import { resolveChatStreamPayload } from '@/server/services/chatStreamPayload';
+import { type ChatStreamRequestPayload } from '@/types/openai/chat';
 import { createErrorResponse } from '@/utils/errorResponse';
 import { getTracePayload } from '@/utils/trace';
 
@@ -21,7 +22,13 @@ export const POST = checkAuth(async (req: Request, { params, userId, serverDB })
 
     // ============  2. create chat completion   ============ //
 
-    const data = (await req.json()) as ChatStreamPayload;
+    const requestPayload = (await req.json()) as ChatStreamRequestPayload;
+    const data = await resolveChatStreamPayload({
+      db: serverDB,
+      payload: requestPayload,
+      provider,
+      userId,
+    });
 
     const tracePayload = getTracePayload(req);
 

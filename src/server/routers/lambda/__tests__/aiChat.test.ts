@@ -7,6 +7,7 @@ import { MessageModel } from '@/database/models/message';
 import { ThreadModel } from '@/database/models/thread';
 import { TopicModel } from '@/database/models/topic';
 import { AiChatService } from '@/server/services/aiChat';
+import { ChatMessagePackageService } from '@/server/services/chatMessagePackage';
 
 import { aiChatRouter } from '../aiChat';
 
@@ -15,6 +16,7 @@ vi.mock('@/database/models/message');
 vi.mock('@/database/models/thread');
 vi.mock('@/database/models/topic');
 vi.mock('@/server/services/aiChat');
+vi.mock('@/server/services/chatMessagePackage');
 vi.mock('@/server/services/file', () => ({
   FileService: vi.fn(),
 }));
@@ -121,6 +123,47 @@ describe('aiChatRouter', () => {
     );
     expect(res.isCreateNewTopic).toBe(false);
     expect(res.topicId).toBe('t-exist');
+  });
+
+  it('should resolve messagePackageRef before creating the user message', async () => {
+    const mockCreateMessage = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'm-user' })
+      .mockResolvedValueOnce({ id: 'm-assistant' });
+    const mockGet = vi.fn().mockResolvedValue({ messages: [], topics: undefined });
+    const mockResolve = vi.fn().mockResolvedValue({
+      content: 'resolved long content',
+      editorData: { root: { children: [] } },
+      pageSelections: [{ id: 'page-1', content: 'selection' }],
+      parentId: 'm-parent',
+    });
+
+    vi.mocked(MessageModel).mockImplementation(() => ({ create: mockCreateMessage }) as any);
+    vi.mocked(AiChatService).mockImplementation(() => ({ getMessagesAndTopics: mockGet }) as any);
+    vi.mocked(ChatMessagePackageService).mockImplementation(
+      () => ({ resolve: mockResolve }) as any,
+    );
+
+    const caller = aiChatRouter.createCaller(mockCtx as any);
+
+    await caller.sendMessageInServer({
+      newAssistantMessage: { model: 'gpt-4o', provider: 'openai' },
+      newUserMessage: { messagePackageRef: { id: 'pkg-1' } },
+      sessionId: 's1',
+      topicId: 't-exist',
+    } as any);
+
+    expect(mockResolve).toHaveBeenCalledWith({ id: 'pkg-1' });
+    expect(mockCreateMessage).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        content: 'resolved long content',
+        editorData: { root: { children: [] } },
+        metadata: { pageSelections: [{ id: 'page-1', content: 'selection' }] },
+        parentId: 'm-parent',
+        role: 'user',
+      }),
+    );
   });
 
   it('should pass threadId to both user and assistant messages when provided', async () => {

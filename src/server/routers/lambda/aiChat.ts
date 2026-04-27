@@ -1,5 +1,12 @@
 import { type CreateMessageParams, type SendMessageServerResponse } from '@lobechat/types';
-import { AiSendMessageServerSchema, RequestTrigger, StructureOutputSchema } from '@lobechat/types';
+import {
+  AiSendMessageServerSchema,
+  AppendMessagePackageChunkSchema,
+  CreateMessagePackageSchema,
+  FinalizeMessagePackageSchema,
+  RequestTrigger,
+  StructureOutputSchema,
+} from '@lobechat/types';
 import debug from 'debug';
 
 import { LOADING_FLAT } from '@/const/message';
@@ -12,6 +19,7 @@ import { serverDatabase } from '@/libs/trpc/lambda/middleware';
 import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
 import { resolveContext } from '@/server/routers/lambda/_helpers/resolveContext';
 import { AiChatService } from '@/server/services/aiChat';
+import { ChatMessagePackageService } from '@/server/services/chatMessagePackage';
 import { FileService } from '@/server/services/file';
 
 const log = debug('lobe-lambda-router:ai-chat');
@@ -23,6 +31,7 @@ const aiChatProcedure = authedProcedure.use(serverDatabase).use(async (opts) => 
     ctx: {
       agentModel: new AgentModel(ctx.serverDB, ctx.userId),
       aiChatService: new AiChatService(ctx.serverDB, ctx.userId),
+      chatMessagePackageService: new ChatMessagePackageService(ctx.serverDB, ctx.userId),
       fileService: new FileService(ctx.serverDB, ctx.userId),
       messageModel: new MessageModel(ctx.serverDB, ctx.userId),
       threadModel: new ThreadModel(ctx.serverDB, ctx.userId),
@@ -32,6 +41,24 @@ const aiChatProcedure = authedProcedure.use(serverDatabase).use(async (opts) => 
 });
 
 export const aiChatRouter = router({
+  appendMessagePackageChunk: aiChatProcedure
+    .input(AppendMessagePackageChunkSchema)
+    .mutation(async ({ input, ctx }) => {
+      return ctx.chatMessagePackageService.appendChunk(input);
+    }),
+
+  createMessagePackage: aiChatProcedure
+    .input(CreateMessagePackageSchema)
+    .mutation(async ({ input, ctx }) => {
+      return ctx.chatMessagePackageService.create(input);
+    }),
+
+  finalizeMessagePackage: aiChatProcedure
+    .input(FinalizeMessagePackageSchema)
+    .mutation(async ({ input, ctx }) => {
+      return ctx.chatMessagePackageService.finalize(input);
+    }),
+
   outputJSON: aiChatProcedure.input(StructureOutputSchema).mutation(async ({ input, ctx }) => {
     log('outputJSON called with provider: %s, model: %s', input.provider, input.model);
     log('messages count: %d', input.messages.length);
@@ -122,7 +149,11 @@ export const aiChatRouter = router({
         }
       }
 
-      let parentId = input.newUserMessage.parentId;
+      const newUserMessage = input.newUserMessage.messagePackageRef
+        ? await ctx.chatMessagePackageService.resolve(input.newUserMessage.messagePackageRef)
+        : input.newUserMessage;
+
+      let parentId = newUserMessage.parentId;
 
       if (input.preloadMessages?.length) {
         log('creating %d preload messages before user message', input.preloadMessages.length);
@@ -148,18 +179,18 @@ export const aiChatRouter = router({
       }
 
       // create user message
-      log('creating user message with content length: %d', input.newUserMessage.content.length);
+      log('creating user message with content length: %d', newUserMessage.content?.length ?? 0);
 
       // Build user message metadata with pageSelections if present
-      const userMessageMetadata = input.newUserMessage.pageSelections?.length
-        ? { pageSelections: input.newUserMessage.pageSelections }
+      const userMessageMetadata = newUserMessage.pageSelections?.length
+        ? { pageSelections: newUserMessage.pageSelections }
         : undefined;
 
       const userMessageItem = await ctx.messageModel.create({
         agentId: input.agentId,
-        content: input.newUserMessage.content,
-        editorData: input.newUserMessage.editorData,
-        files: input.newUserMessage.files,
+        content: newUserMessage.content ?? '',
+        editorData: newUserMessage.editorData,
+        files: newUserMessage.files,
         groupId: input.groupId,
         metadata: userMessageMetadata,
         parentId,

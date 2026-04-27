@@ -1,5 +1,6 @@
 import { type FetchSSEOptions } from '@lobechat/fetch-sse';
 import {
+  type CompactChatReference,
   type RuntimeInitialContext,
   type RuntimeStepContext,
   type TracePayload,
@@ -7,6 +8,7 @@ import {
 
 export interface FetchOptions extends FetchSSEOptions {
   agentId?: string;
+  chatRef?: CompactChatReference;
   historySummary?: string;
   /** Initial context for page editor (captured at operation start) */
   initialContext?: RuntimeInitialContext;

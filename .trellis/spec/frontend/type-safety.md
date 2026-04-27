@@ -76,6 +76,134 @@ API inputs. The runtime boundary is the tRPC router or HTTP route handler.
 
 ---
 
+## Scenario: Compact Ordinary Chat Requests
+
+### 1. Scope / Trigger
+
+- Trigger: ordinary Client-mode chat must avoid large browser-to-server request
+  bodies.
+- Applies only after `sendMessageInServer` has persisted the current user and
+  assistant placeholder messages. Do not use this as a global API compression
+  pattern or Gateway promotion.
+
+### 2. Signatures
+
+- Frontend LLM POST:
+  `ChatStreamRequestPayload = ChatStreamPayload | CompactChatStreamPayload`.
+- Compact payload:
+
+```ts
+interface CompactChatStreamPayload extends Partial<Omit<ChatStreamPayload, 'messages' | 'tools'>> {
+  chatRef: {
+    agentId?: string;
+    assistantMessageId: string;
+    groupId?: string;
+    initialContext?: RuntimeInitialContext;
+    parentMessageId?: string;
+    stepContext?: RuntimeStepContext;
+    threadId?: string;
+    topicId?: string;
+  };
+  compact: true;
+}
+```
+
+- Oversized current message packages use
+  `SendNewMessage.messagePackageRef?: { id: string }` after chunk upload through
+  `aiChat.createMessagePackage`, `aiChat.appendMessagePackageChunk`, and
+  `aiChat.finalizeMessagePackage`.
+
+### 3. Contracts
+
+- Compact `/webapi/chat/[provider]` requests must omit model-ready `messages`
+  and `tools`.
+- Keep short `sendMessageInServer.newUserMessage` content inline.
+- For oversized current message packages, upload chunks first and pass only
+  `messagePackageRef` to `sendMessageInServer`.
+- Backend route resolves compact chat references from the persisted active
+  conversation path and existing server-side context engineering before calling
+  the model runtime.
+- Compact reconstruction must restore runtime context that used to be assembled
+  on the client, including `RuntimeStepContext`, active group identity
+  (`agentGroup`), and `initialContext.mentionedAgents` for call-agent
+  delegation. Selected skill/tool context is persisted into the current user
+  message before the compact LLM POST, so do not re-send or re-inject it through
+  `chatRef.initialContext`.
+
+### 4. Validation & Error Matrix
+
+- Missing inline `content` and missing `messagePackageRef` -> Zod validation
+  error.
+- Missing message-package chunk -> finalize fails.
+- Byte-length mismatch -> finalize fails.
+- Unfinalized or foreign package reference -> resolve fails.
+- Compact payload missing resolvable model/provider -> route-side resolver
+  fails.
+
+### 5. Good/Base/Bad Cases
+
+- Good: persisted ordinary chat call sends compact metadata plus
+  `assistantMessageId`.
+- Base: short current user message remains inline for `sendMessageInServer`.
+- Bad: browser sends full `messages`, selected skill/tool context, or
+  base64/file content in the later LLM POST.
+
+### 6. Tests Required
+
+- Frontend helper test: oversized package splits by UTF-8 byte length and
+  returns only a ref.
+- Router test: `sendMessageInServer` resolves `messagePackageRef` before
+  creating the user message.
+- Route/service test: compact chat payload reconstructs messages before model
+  runtime call.
+- Route/service test: compact chat payload forwards group identity and
+  mentioned-agent context into server-side context engineering.
+- Frontend chat service test: compact LLM request body excludes `messages` and
+  `tools`.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```ts
+await fetchSSE('/webapi/chat/openai', {
+  body: JSON.stringify({ messages: modelReadyMessages, tools }),
+});
+```
+
+Correct:
+
+```ts
+await fetchSSE('/webapi/chat/openai', {
+  body: JSON.stringify({
+    chatRef: { agentId, assistantMessageId, topicId },
+    compact: true,
+    model,
+  }),
+});
+```
+
+Wrong:
+
+```ts
+await serverMessagesEngine({ messages, model, provider });
+```
+
+Correct:
+
+```ts
+await serverMessagesEngine({
+  agentGroup,
+  agentManagementContext,
+  messages,
+  model,
+  provider,
+  stepContext,
+});
+```
+
+---
+
 ## Assertions And `any`
 
 Avoid broad `any` in production code. Existing code has some `any` in tests,

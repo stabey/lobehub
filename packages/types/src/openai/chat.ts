@@ -1,5 +1,6 @@
 import type { LLMRoleType } from '../llm';
 import type { MessageToolCall } from '../message';
+import type { RuntimeInitialContext, RuntimeStepContext } from '../stepContext';
 import type { OpenAIFunctionCall } from './functionCall';
 
 export type ChatResponseFormat =
@@ -119,6 +120,26 @@ export interface ChatStreamPayload {
    */
   top_p?: number;
 }
+
+export interface CompactChatReference {
+  agentId?: string;
+  assistantMessageId: string;
+  groupId?: string;
+  initialContext?: RuntimeInitialContext;
+  parentMessageId?: string;
+  stepContext?: RuntimeStepContext;
+  threadId?: string;
+  topicId?: string;
+}
+
+export interface CompactChatStreamPayload extends Partial<
+  Omit<ChatStreamPayload, 'messages' | 'tools'>
+> {
+  chatRef: CompactChatReference;
+  compact: true;
+}
+
+export type ChatStreamRequestPayload = ChatStreamPayload | CompactChatStreamPayload;
 
 export interface ChatCompletionFunctions {
   /**

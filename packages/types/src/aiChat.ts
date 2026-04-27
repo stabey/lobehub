@@ -13,14 +13,24 @@ import type { ChatThreadType } from './topic/thread';
 import { ThreadType } from './topic/thread';
 
 export interface SendNewMessage {
-  content: string;
+  content?: string;
   /** Lexical editor JSON state for rich text rendering */
   editorData?: Record<string, any>;
   // if message has attached with files, then add files to message and the agent
   files?: string[];
+  /**
+   * Server-side reference to an oversized message package uploaded in chunks.
+   * When present, the server resolves content/editorData/files/pageSelections
+   * before persisting the user message.
+   */
+  messagePackageRef?: MessagePackageRef;
   /** Page selections attached to this message (for Ask AI functionality) */
   pageSelections?: PageSelection[];
   parentId?: string;
+}
+
+export interface MessagePackageRef {
+  id: string;
 }
 
 export interface SendPreloadMessage extends Omit<
@@ -109,6 +119,56 @@ const SendPreloadMessageSchema = z.object({
   tools: z.array(ChatToolPayloadSchema).optional(),
 });
 
+export const MessagePackageRefSchema = z.object({
+  id: z.string(),
+});
+
+export const InlineSendNewMessageSchema = z.object({
+  content: z.string(),
+  editorData: z.record(z.unknown()).optional(),
+  files: z.array(z.string()).optional(),
+  pageSelections: z.array(PageSelectionSchema).optional(),
+  parentId: z.string().optional(),
+});
+
+export const SendNewMessageSchema = z
+  .object({
+    content: z.string().optional(),
+    editorData: z.record(z.unknown()).optional(),
+    files: z.array(z.string()).optional(),
+    messagePackageRef: MessagePackageRefSchema.optional(),
+    pageSelections: z.array(PageSelectionSchema).optional(),
+    parentId: z.string().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.content === undefined && !value.messagePackageRef) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Either content or messagePackageRef is required',
+        path: ['content'],
+      });
+    }
+  });
+
+export const CreateMessagePackageSchema = z.object({
+  byteLength: z.number().int().nonnegative().optional(),
+  totalChunks: z.number().int().positive(),
+});
+
+export const AppendMessagePackageChunkSchema = z.object({
+  chunk: z.string().min(1),
+  id: z.string(),
+  index: z.number().int().nonnegative(),
+});
+
+export const FinalizeMessagePackageSchema = z.object({
+  id: z.string(),
+});
+
+export type CreateMessagePackageParams = z.infer<typeof CreateMessagePackageSchema>;
+export type AppendMessagePackageChunkParams = z.infer<typeof AppendMessagePackageChunkSchema>;
+export type FinalizeMessagePackageParams = z.infer<typeof FinalizeMessagePackageSchema>;
+
 export const AiSendMessageServerSchema = z.object({
   agentId: z.string().optional(),
   groupId: z.string().optional(),
@@ -127,13 +187,7 @@ export const AiSendMessageServerSchema = z.object({
     })
     .optional(),
   preloadMessages: z.array(SendPreloadMessageSchema).optional(),
-  newUserMessage: z.object({
-    content: z.string(),
-    editorData: z.record(z.unknown()).optional(),
-    files: z.array(z.string()).optional(),
-    pageSelections: z.array(PageSelectionSchema).optional(),
-    parentId: z.string().optional(),
-  }),
+  newUserMessage: SendNewMessageSchema,
   sessionId: z.string().optional(),
   threadId: z.string().optional(),
   topicId: z.string().optional(),

@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Review backend changes against route/router/service/database guidelines."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify route/router error behavior and validation failures."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify persistence/query changes are consistent and safe."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Check backend quality and maintainability."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Review frontend service/store changes against project conventions."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Check chat store lifecycle and optimistic update consistency."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Check payload contracts and validation types."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify tests and quality expectations."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify cross-layer data flow from frontend references to backend reconstruction."}

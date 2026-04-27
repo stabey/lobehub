@@ -20,6 +20,7 @@ import { t } from 'i18next';
 import { markUserValidAction } from '@/business/client/markUserValidAction';
 import { message as antdMessage } from '@/components/AntdStaticMethods';
 import { aiChatService } from '@/services/aiChat';
+import { resolveMessagePackageForSend } from '@/services/aiChat/messagePackage';
 import { chatService } from '@/services/chat';
 import { resolveSelectedSkillsWithContent } from '@/services/chat/mecha/skillPreload';
 import { resolveSelectedToolsWithContent } from '@/services/chat/mecha/toolPreload';
@@ -387,6 +388,18 @@ export class ConversationLifecycleActionImpl {
       // Persist messages to DB first (same as client mode)
       let heteroData: SendMessageServerResponse | undefined;
       try {
+        const newUserMessage = await resolveMessagePackageForSend(
+          {
+            content: message,
+            editorData,
+            files: fileIdList,
+            pageSelections,
+            parentId,
+          },
+          aiChatService,
+          { abortController },
+        );
+
         heteroData = await aiChatService.sendMessageInServer(
           {
             agentId: operationContext.agentId,
@@ -403,13 +416,7 @@ export class ConversationLifecycleActionImpl {
                   topicMessageIds: messages.map((m) => m.id),
                 }
               : undefined,
-            newUserMessage: {
-              content: message,
-              editorData,
-              files: fileIdList,
-              pageSelections,
-              parentId,
-            },
+            newUserMessage,
             threadId: operationContext.threadId ?? undefined,
             topicId: operationContext.topicId ?? undefined,
           },
@@ -590,15 +597,21 @@ export class ConversationLifecycleActionImpl {
       const contextSuffix = [skillContext, toolContext].filter(Boolean).join('\n');
       const persistedContent = contextSuffix ? `${message}\n\n${contextSuffix}` : message;
 
+      const newUserMessage = await resolveMessagePackageForSend(
+        {
+          content: persistedContent,
+          editorData,
+          files: fileIdList,
+          pageSelections,
+          parentId,
+        },
+        aiChatService,
+        { abortController },
+      );
+
       data = await aiChatService.sendMessageInServer(
         {
-          newUserMessage: {
-            content: persistedContent,
-            editorData,
-            files: fileIdList,
-            pageSelections,
-            parentId,
-          },
+          newUserMessage,
           preloadMessages: undefined,
           // if there is topicId, then add topicId to message
           topicId: topicId ?? undefined,

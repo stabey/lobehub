@@ -1,0 +1,12 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend guideline index for API routes, tRPC routers, services, and database work."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Route/router/service placement conventions for backend implementation."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error handling expectations for API and tRPC changes."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Database/model patterns needed if message package references require persistence."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality rules for shared runtime and service code."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Logging conventions for new backend request/reference flows."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend guideline index for service/store changes."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Zustand and optimistic update guidance for chat lifecycle changes."}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Shared type and runtime validation guidance for payload contract changes."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend test and quality expectations."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Task spans frontend service/store, backend route/router, and database/model boundaries."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Search existing request/reference patterns before adding helpers."}

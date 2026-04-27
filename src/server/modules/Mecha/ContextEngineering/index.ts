@@ -60,6 +60,7 @@ export const serverMessagesEngine = async ({
   historySummary,
   formatHistorySummary,
   initialContext,
+  stepContext,
   knowledge,
   agentDocuments,
   skillsConfig,
@@ -77,6 +78,7 @@ export const serverMessagesEngine = async ({
   topicReferences,
   additionalVariables,
   userTimezone,
+  agentGroup,
 }: ServerMessagesEngineParams): Promise<OpenAIChatMessage[]> => {
   const engine = new MessagesEngine({
     // Capability injection
@@ -104,6 +106,7 @@ export const serverMessagesEngine = async ({
     inputTemplate,
 
     initialContext,
+    stepContext,
 
     // Knowledge injection
     knowledge: {
@@ -159,6 +162,7 @@ export const serverMessagesEngine = async ({
 
     // Extended contexts
     ...(agentBuilderContext && { agentBuilderContext }),
+    ...(agentGroup && { agentGroup }),
     ...(botPlatformContext && { botPlatformContext }),
     ...(discordContext && { discordContext }),
     ...(evalContext && { evalContext }),

@@ -1,4 +1,5 @@
 export enum AsyncTaskType {
+  ChatMessagePackage = 'chat_message_package',
   Chunking = 'chunk',
   Embedding = 'embedding',
   ImageGeneration = 'image_generation',

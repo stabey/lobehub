@@ -6,6 +6,8 @@ import { fetchSSE, standardizeAnimationStyle } from '@lobechat/fetch-sse';
 import type { ChatCompletionErrorPayload } from '@lobechat/model-runtime';
 import { AgentRuntimeError, responsesAPIModels } from '@lobechat/model-runtime';
 import {
+  type ChatStreamRequestPayload,
+  type CompactChatReference,
   type RuntimeInitialContext,
   type RuntimeStepContext,
   type TracePayload,
@@ -53,7 +55,6 @@ import {
 } from './mecha';
 import { type FetchOptions } from './types';
 
-const defaultProvider = ModelProvider.OpenAI;
 const providersWithDeploymentName = new Set<string>([
   ModelProvider.Azure,
   ModelProvider.AzureAI,
@@ -63,13 +64,16 @@ const providersWithDeploymentName = new Set<string>([
 ]);
 interface GetChatCompletionPayload extends Partial<Omit<ChatStreamPayload, 'messages'>> {
   agentId?: string;
+  assistantMessageId?: string;
   groupId?: string;
   messages: UIChatMessage[];
+  parentMessageId?: string;
   /**
    * Pre-resolved agent config from AgentRuntime layer.
    * Required to ensure config consistency and proper isSubTask filtering.
    */
   resolvedAgentConfig: ResolvedAgentConfig;
+  threadId?: string;
   topicId?: string;
 }
 
@@ -103,6 +107,51 @@ interface CreateAssistantMessageStream extends FetchSSEOptions {
   trace?: TracePayload;
 }
 
+const hasClientOnlyInitialContext = (
+  initialContext?: RuntimeInitialContext,
+  stepContext?: RuntimeStepContext,
+) => !!initialContext?.pageEditor || !!initialContext?.taskManager || !!stepContext?.stepPageEditor;
+
+const createSlimInitialContext = (
+  initialContext?: RuntimeInitialContext,
+): RuntimeInitialContext | undefined => {
+  if (!initialContext) return;
+
+  const { activeTopicDocument, injectedManifests, mentionedAgents } = initialContext;
+  const slimContext = { activeTopicDocument, injectedManifests, mentionedAgents };
+
+  return Object.values(slimContext).some(Boolean) ? slimContext : undefined;
+};
+
+const createSlimStepContext = (
+  stepContext?: RuntimeStepContext,
+): RuntimeStepContext | undefined => {
+  if (!stepContext) return;
+
+  const { activatedSkills, activatedToolIds, hasQueuedMessages, todos } = stepContext;
+  const slimContext = { activatedSkills, activatedToolIds, hasQueuedMessages, todos };
+
+  return Object.values(slimContext).some(Boolean) ? slimContext : undefined;
+};
+
+const createCompactChatRequestPayload = (
+  payload: Partial<ChatStreamPayload>,
+  chatRef: CompactChatReference,
+): ChatStreamRequestPayload => {
+  const {
+    messages: _messages,
+    parentMessageId: _parentMessageId,
+    tools: _tools,
+    ...compactPayload
+  } = payload as Partial<ChatStreamPayload> & { parentMessageId?: string };
+
+  return {
+    ...compactPayload,
+    chatRef,
+    compact: true,
+  };
+};
+
 class ChatService {
   private resolveAgentDocumentsTargetId = (
     targetAgentId: string,
@@ -119,7 +168,10 @@ class ChatService {
     {
       messages,
       agentId,
+      assistantMessageId,
       groupId,
+      parentMessageId,
+      threadId,
       topicId,
       resolvedAgentConfig,
       ...params
@@ -155,6 +207,14 @@ class ChatService {
     // Get search config with agentId for agent-specific settings
     const searchConfig = getSearchConfig(payload.model, payload.provider!, targetAgentId);
 
+    // ============  3. process extend params   ============ //
+
+    const extendParams = resolveModelExtendParams({
+      chatConfig,
+      model: payload.model,
+      provider: payload.provider!,
+    });
+
     // =================== 1.1 process user memories =================== //
 
     const userLevelMemoryEnabled = settingsSelectors.memoryEnabled(getUserStoreState());
@@ -164,6 +224,41 @@ class ChatService {
     const userMemorySettings = settingsSelectors.currentMemorySettings(getUserStoreState());
     const effectiveMemoryEffort =
       chatConfig.memory?.effort ?? userMemorySettings.effort ?? 'medium';
+
+    const shouldUseCompactRequest =
+      !!assistantMessageId &&
+      !isEnableFetchOnClient(payload.provider!) &&
+      !enabledToolIds.includes(AgentBuilderIdentifier) &&
+      !hasClientOnlyInitialContext(options?.initialContext, options?.stepContext);
+
+    if (shouldUseCompactRequest) {
+      return this.getChatCompletion(
+        {
+          ...params,
+          ...extendParams,
+          enabledSearch:
+            searchConfig.enabledSearch && searchConfig.useModelSearch ? true : undefined,
+          model: payload.model,
+          provider: payload.provider,
+          stream: chatConfig.enableStreaming !== false,
+        },
+        {
+          ...options,
+          agentId: targetAgentId,
+          chatRef: {
+            agentId: targetAgentId || undefined,
+            assistantMessageId,
+            groupId,
+            initialContext: createSlimInitialContext(options?.initialContext),
+            parentMessageId,
+            stepContext: createSlimStepContext(options?.stepContext),
+            threadId,
+            topicId,
+          },
+          topicId,
+        },
+      );
+    }
 
     // =================== 1.2 build agent builder context =================== //
 
@@ -295,14 +390,6 @@ class ChatService {
       memoryContext: {
         effort: effectiveMemoryEffort,
       },
-    });
-
-    // ============  3. process extend params   ============ //
-
-    const extendParams = resolveModelExtendParams({
-      chatConfig,
-      model: payload.model,
-      provider: payload.provider!,
     });
 
     return this.getChatCompletion(
@@ -460,8 +547,13 @@ class ChatService {
       responseAnimation,
     ].reduce((acc, cur) => merge(acc, standardizeAnimationStyle(cur)), {});
 
+    const requestPayload =
+      options?.chatRef && !enableFetchOnClient
+        ? createCompactChatRequestPayload(payload, options.chatRef)
+        : payload;
+
     return fetchSSE(API_ENDPOINTS.chat(provider), {
-      body: JSON.stringify(payload),
+      body: JSON.stringify(requestPayload),
       fetcher,
       headers,
       method: 'POST',

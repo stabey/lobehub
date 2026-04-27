@@ -2,6 +2,7 @@
 import type {
   AgentBuilderContext,
   AgentContextDocument,
+  AgentGroupConfig,
   AgentManagementContext,
   BotPlatformContext,
   DiscordContext,
@@ -16,7 +17,7 @@ import type {
   UserMemoryData,
 } from '@lobechat/context-engine';
 import type { PageContentContext } from '@lobechat/prompts';
-import type { RuntimeInitialContext, UIChatMessage } from '@lobechat/types';
+import type { RuntimeInitialContext, RuntimeStepContext, UIChatMessage } from '@lobechat/types';
 
 /**
  * Model capability checker functions for server-side
@@ -78,6 +79,8 @@ export interface ServerMessagesEngineParams {
   // ========== Extended contexts ==========
   /** Agent Builder context (optional, for editing agents) */
   agentBuilderContext?: AgentBuilderContext;
+  /** Agent group context (optional, for multi-agent group chat) */
+  agentGroup?: AgentGroupConfig;
   /** Agent Management context (optional, available models and plugins) */
   agentManagementContext?: AgentManagementContext;
   // ========== Capability injection ==========
@@ -111,6 +114,8 @@ export interface ServerMessagesEngineParams {
   inputTemplate?: string;
   /** Initial runtime context captured at operation start */
   initialContext?: RuntimeInitialContext;
+  /** Runtime context updated at each agent step */
+  stepContext?: RuntimeStepContext;
   // ========== Knowledge ==========
   /** Knowledge configuration */
   knowledge?: ServerKnowledgeConfig;
@@ -151,6 +156,7 @@ export interface ServerMessagesEngineParams {
 export {
   type AgentBuilderContext,
   type AgentContextDocument,
+  type AgentGroupConfig,
   type AgentManagementContext,
   type BotPlatformContext,
   type DiscordContext,

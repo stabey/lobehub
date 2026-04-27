@@ -1,13 +1,33 @@
 // @vitest-environment node
-import { type LobeRuntimeAI } from '@lobechat/model-runtime';
-import { ModelRuntime } from '@lobechat/model-runtime';
 import { ChatErrorType } from '@lobechat/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { auth } from '@/auth';
 import { initModelRuntimeFromDB } from '@/server/modules/ModelRuntime';
+import { resolveChatStreamPayload } from '@/server/services/chatStreamPayload';
 
 import { POST } from './route';
+
+vi.mock('@lobechat/model-runtime', () => ({
+  AGENT_RUNTIME_ERROR_SET: new Set(),
+  AgentRuntimeError: {
+    createError: vi.fn((errorType) => ({ errorType })),
+  },
+  AgentRuntimeErrorType: {
+    AccountDeactivated: 'AccountDeactivated',
+    AgentRuntimeError: 'AgentRuntimeError',
+    ExceededContextWindow: 'ExceededContextWindow',
+    InsufficientQuota: 'InsufficientQuota',
+    InvalidProviderAPIKey: 'InvalidProviderAPIKey',
+    LocationNotSupportError: 'LocationNotSupportError',
+    ModelNotFound: 'ModelNotFound',
+    NoOpenAIAPIKey: 'NoOpenAIAPIKey',
+    OllamaBizError: 'OllamaBizError',
+    OllamaServiceUnavailable: 'OllamaServiceUnavailable',
+    ProviderBizError: 'ProviderBizError',
+    QuotaLimitReached: 'QuotaLimitReached',
+  },
+}));
 
 vi.mock('@/app/(backend)/middleware/auth/utils', () => ({
   checkAuthMethod: vi.fn(),
@@ -16,6 +36,14 @@ vi.mock('@/app/(backend)/middleware/auth/utils', () => ({
 vi.mock('@/server/modules/ModelRuntime', () => ({
   initModelRuntimeFromDB: vi.fn(),
   createTraceOptions: vi.fn().mockReturnValue({}),
+}));
+
+vi.mock('@/server/services/chatStreamPayload', () => ({
+  resolveChatStreamPayload: vi.fn(async ({ payload }) => payload),
+}));
+
+vi.mock('@/utils/trace', () => ({
+  getTracePayload: vi.fn(),
 }));
 
 vi.mock('@/auth', () => ({
@@ -39,6 +67,7 @@ beforeEach(() => {
     session: {} as any,
     user: { id: 'test-user-id' } as any,
   });
+  vi.mocked(resolveChatStreamPayload).mockImplementation(async ({ payload }) => payload as any);
 });
 
 afterEach(() => {
@@ -53,12 +82,13 @@ describe('POST handler', () => {
       const mockChatResponse = new Response(JSON.stringify({ success: true }), {
         headers: { 'Content-Type': 'application/json' },
       });
-      const mockRuntime: LobeRuntimeAI = {
-        baseURL: 'abc',
+      const mockRuntime = {
         chat: vi.fn().mockResolvedValue(mockChatResponse),
       };
 
-      vi.mocked(initModelRuntimeFromDB).mockResolvedValue(new ModelRuntime(mockRuntime));
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue(
+        mockRuntime as unknown as Awaited<ReturnType<typeof initModelRuntimeFromDB>>,
+      );
 
       await POST(request as unknown as Request, { params: mockParams });
 
@@ -90,17 +120,59 @@ describe('POST handler', () => {
       });
 
       const mockChatResponse: any = { success: true, message: 'Reply from agent' };
-      const mockRuntime: LobeRuntimeAI = {
-        baseURL: 'abc',
+      const mockRuntime = {
         chat: vi.fn().mockResolvedValue(mockChatResponse),
       };
 
-      vi.mocked(initModelRuntimeFromDB).mockResolvedValue(new ModelRuntime(mockRuntime));
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue(
+        mockRuntime as unknown as Awaited<ReturnType<typeof initModelRuntimeFromDB>>,
+      );
 
       const response = await POST(request as unknown as Request, { params: mockParams });
 
       expect(response).toEqual(mockChatResponse);
       expect(mockRuntime.chat).toHaveBeenCalledWith(mockChatPayload, {
+        user: 'test-user-id',
+        signal: expect.anything(),
+      });
+    });
+
+    it('should reconstruct compact chat payload before calling model runtime', async () => {
+      const mockParams = Promise.resolve({ provider: 'test-provider' });
+      const compactPayload = {
+        chatRef: { assistantMessageId: 'm-assistant', topicId: 'topic-1' },
+        compact: true,
+        model: 'test-model',
+      };
+      const resolvedPayload = {
+        messages: [{ content: 'resolved from db', role: 'user' }],
+        model: 'test-model',
+      };
+      request = new Request(new URL('https://test.com'), {
+        method: 'POST',
+        body: JSON.stringify(compactPayload),
+      });
+
+      const mockChatResponse: any = { success: true };
+      const mockRuntime = {
+        chat: vi.fn().mockResolvedValue(mockChatResponse),
+      };
+
+      vi.mocked(resolveChatStreamPayload).mockResolvedValue(resolvedPayload as any);
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue(
+        mockRuntime as unknown as Awaited<ReturnType<typeof initModelRuntimeFromDB>>,
+      );
+
+      const response = await POST(request as unknown as Request, { params: mockParams });
+
+      expect(response).toEqual(mockChatResponse);
+      expect(resolveChatStreamPayload).toHaveBeenCalledWith({
+        db: expect.anything(),
+        payload: compactPayload,
+        provider: 'test-provider',
+        userId: 'test-user-id',
+      });
+      expect(mockRuntime.chat).toHaveBeenCalledWith(resolvedPayload, {
         user: 'test-user-id',
         signal: expect.anything(),
       });
@@ -120,12 +192,13 @@ describe('POST handler', () => {
         errorMessage: 'Something went wrong',
       };
 
-      const mockRuntime: LobeRuntimeAI = {
-        baseURL: 'abc',
+      const mockRuntime = {
         chat: vi.fn().mockRejectedValue(mockErrorResponse),
       };
 
-      vi.mocked(initModelRuntimeFromDB).mockResolvedValue(new ModelRuntime(mockRuntime));
+      vi.mocked(initModelRuntimeFromDB).mockResolvedValue(
+        mockRuntime as unknown as Awaited<ReturnType<typeof initModelRuntimeFromDB>>,
+      );
 
       const response = await POST(request, { params: mockParams });
 
